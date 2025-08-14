@@ -14,6 +14,8 @@ from fastapi.responses import PlainTextResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 import pendulum
+import hashlib
+import base64
 
 templates = Jinja2Templates(directory="templates")
 
@@ -41,7 +43,7 @@ def auth_okay(request: Request, username: str, user_header: str = USERNAME_HEADE
     """
     Check if the request is authenticated.
     """
-    logger.debug(f'all headers: {request.headers}')
+    #logger.debug(f'all headers: {request.headers}')
     # only allow user defined in the request, or if user is admin
     found_username = request.headers.get( user_header )
     admins = os.getenv('SLACSSH_ADMINS', '').split(',')
@@ -66,7 +68,7 @@ async def list( request: Request, username: str, jinja_template: str = 'list.htm
     
     auth_okay(request, username)
 
-    
+
     if not username in ALL_KEYS:
         raise HTTPException(status_code=404, detail=f"No SSH keys found for {username}. Call /create first.")
 
@@ -159,13 +161,19 @@ def generate_keypair( username: str, key_type: str = "rsa", key_bits: int = 2048
     private_key = private_key_string_io.getvalue() 
     
     now = pendulum.now()
+    # obtain a fingerprint that should be the same as that reported by sshd when key is used
+    public_key = key.get_base64() 
+    sha256 = hashlib.sha256()
+    sha256.update(base64.b64decode(public_key))
+    hash_sha256 = sha256.digest()
+    finger_print = f"SHA256:{base64.b64encode(hash_sha256).decode('utf-8').replace('/','.')}"
 
     return {
         'key_type': key.get_name(),
         'username': username,
-        'finger_print': binascii.hexlify(key.get_fingerprint()).decode('utf-8'),
+        'finger_print': finger_print,
         'private_key': private_key,
-        'public_key': key.get_base64(),
+        'public_key': public_key,
         'created_at': now,
         'valid_until': now.add(seconds=valid_seconds),
         'expires_at': now.add(seconds=expires_seconds)
