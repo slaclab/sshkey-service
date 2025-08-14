@@ -139,15 +139,17 @@ def generate_keypair( username: str, key_type: str = "rsa", key_bits: int = 2048
     key.write_private_key(private_key_string_io)
     private_key = private_key_string_io.getvalue() 
     
+    now = pendulum.now()
+
     return {
         'key_type': key.get_name(),
         'username': username,
         'finger_print': binascii.hexlify(key.get_fingerprint()).decode('utf-8'),
         'private_key': private_key,
         'public_key': key.get_base64(),
-        'created_at': pendulum.now().to_iso8601_string(),
-        'valid_until': pendulum.now().add(hours=25).to_iso8601_string(),
-        'expires_at': pendulum.now().add(days=30).to_iso8601_string()  
+        'created_at': now,
+        'valid_until': now.add(hours=25),
+        'expires_at': now.add(days=30)
     }   
 
 @app.get("/authorized_keys/{username}", response_class=PlainTextResponse)
@@ -184,6 +186,8 @@ async def destroy_keypair(username: str, finger_print: str):
     del ALL_KEYS[username][finger_print]
     return True
     
+
+
     
 if __name__ == "__main__":
     import uvicorn
