@@ -1,0 +1,31 @@
+kind: Service
+apiVersion: v1
+metadata:
+  name:  slac-ssh-mfa
+spec:
+  selector:
+    app:  slac-ssh-mfa
+  type: ClusterIP
+  ports:
+  - name:  wwww
+    port:  8000
+    targetPort:  8000
+---
+kind: Ingress
+apiVersion: networking.k8s.io/v1
+metadata:
+  name:  slac-ssh-mfa-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+  - host:  slac-ssh-mfa.slac.stanford.edu
+    http:
+      paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: slac-ssh-mfa
+              port:
+                number: 8000

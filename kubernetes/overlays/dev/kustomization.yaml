@@ -1,0 +1,8 @@
+kind: Kustomization
+namespace: slac-ssh-mfa
+
+resources:
+  - deployment.yaml
+  - endpoints.yaml
+
+  
