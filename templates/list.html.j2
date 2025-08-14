@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ title }}</title>
+</head>
+<body>
+    <h1>{{ username }}</h1>
+    <p>{{ message }}</p>
+    <table>
+    <tr>
+        <th>finger print</th>
+        <th>created_at</th>
+        <th>valid_until</th>
+        <th>expires_at</th>
+        <th>action</th>
+    </tr>
+{% for key in keys %}
+    <tr>
+
+    <td>
+{{ key['finger_print'] }} 
+    </td>
+    <td>
+{{ key['created_at'] }} 
+    </td>
+    <td>
+{{ key['valid_until'] }} 
+    </td>
+    <td>
+{{ key['expires_at'] }} 
+    </td>
+
+    <td>
+    <button>Refresh</button>
+    <button>Destroy</button>
+    </td>
+    
+
+
+
+    </tr>
+{% endfor %}
+    </table>
+</html>

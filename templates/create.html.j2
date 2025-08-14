@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ title }}</title>
+</head>
+<body>
+    <h1>{{ username }}</h1>
+    <p>{{ message }}</p>
+    <code>
+    # save the private and public keys to local disk
+    # do we really want to use the finger_print as the filename? how do keep the local files purged of useless keys?
+    mkdir -p {{ prefix_path }}
+    cat > {{ prefix_path}}//{{ keys['finger_print'] }} << EOF
+{{ keys['private_key'] }}
+    EOF
+    cat > {{ prefix_path}}/{{ keys['finger_print'] }}.pub << EOF
+{{ keys['public_key'] }}
+    EOF
+    cat >> ~/.ssh/config << EOF
+Host s3df s3dflogin-mfa.slac.stanford.edu
+    Username {{ username }}
+    IdentityFile {{ prefix_path}}/{{ keys['finger_print'] }} 
+EOF
+</html>

@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+paramiko
+loguru
+jinja2
+pendulum
