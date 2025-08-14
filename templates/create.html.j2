@@ -18,7 +18,7 @@ chmod 600 {{ prefix_path}}/{{ keys['finger_print'] }}
 cat > {{ prefix_path}}/{{ keys['finger_print'] }}.pub << EOF
 {{ keys['public_key'] }}
 EOF
-chmod 600 {{ prefix_path}}//{{ keys['finger_print'] }}{,.pub}
+chmod 600 {{ prefix_path}}//{{ keys['finger_print'] }}.pub
 cat >> ~/.ssh/config << EOF
 Host s3df sdfssh002.sdf.slac.stanford.edu s3dflogin-mfa.slac.stanford.edu
     User {{ username }}
