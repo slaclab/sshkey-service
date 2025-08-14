@@ -19,17 +19,20 @@ templates = Jinja2Templates(directory="templates")
 
 app = FastAPI()
 
-# In-memory storage for the key pair (in production, use a database)
-SSHKEYPAIR = {
-    "key_type": None,
-    "username": None,
-    "finger_print": None,
-    "private_key": None,
-    "public_key": None,
-    "created_at": None,
-    "valid_until": None,
-    "expiry": None   
-}
+# In-memory storage for the key pair (in production, use a database), nested dict of username and key fingerprint
+# This is a simple in-memory storage for demonstration purposes. please use a proper database in production.
+
+ALL_KEYS = {} 
+# SSHKEYPAIR = {
+#     "key_type": None,
+#     "username": None,
+#     "finger_print": None,
+#     "private_key": None,
+#     "public_key": None,
+#     "created_at": None,
+#     "valid_until": None,
+#     "expiry": None   
+# }
 
 # class SSHKeyPair(BaseModel):
 #     key_type: str
@@ -47,7 +50,7 @@ async def list( request: Request, username: str, jinja_template: str = 'list.htm
     """
     logger.info(f"Listing SSH key pair for user: {username}")
     
-    if not SSHKEYPAIR["username"] == username:
+    if not username in ALL_KEYS:
         raise HTTPException(status_code=404, detail=f"No SSH keys found for {username}. Call /create first.")
 
     return templates.TemplateResponse(
@@ -56,7 +59,7 @@ async def list( request: Request, username: str, jinja_template: str = 'list.htm
         context={
             "title": "list",
             "username": username, 
-            "keys": [ SSHKEYPAIR ]
+            "keys": [ ALL_KEYS[username][finger_print] for finger_print in ALL_KEYS[username].keys() ],
         }
     )
 
@@ -81,7 +84,10 @@ async def create( request: Request, username: str, key_type: str = "rsa", key_bi
 
     try:
         bundle = generate_keypair(username, key_type, key_bits)
-        SSHKEYPAIR.update(bundle)
+
+        if not username in ALL_KEYS:
+            ALL_KEYS[username] = {}
+        ALL_KEYS[username][bundle['finger_print']] = bundle
         
         return templates.TemplateResponse(
             name=jinja_template,  # Name of your Jinja2 template file
@@ -90,7 +96,7 @@ async def create( request: Request, username: str, key_type: str = "rsa", key_bi
                 "title": "ssh hackapp", 
                 "username": username, 
                 "prefix_path": "~/.ssh/s3df",
-                "keys": SSHKEYPAIR
+                "keys": ALL_KEYS[username][bundle['finger_print']],
             }
         )
 
@@ -146,10 +152,10 @@ async def get_authorized_keys(request: Request, username: str, jinja_template: s
     Returns the public key in authorized_keys format
     """
     logger.info(f"Fetching authorized keys for user: {username}: {SSHKEYPAIR}")
-    if not username == SSHKEYPAIR["username"]:
+    if not username in ALL_KEYS:
         raise HTTPException(status_code=404, detail=f"No SSH keys found for {username} generated yet. Call /generate-keypair first.")
     
-    keys = [ SSHKEYPAIR ]
+    keys = [ ALL_KEYS[username][finger_print] for finger_print in ALL_KEYS[username].keys() ]
     
     return templates.TemplateResponse(
         name=jinja_template,  # Name of your Jinja2 template file
