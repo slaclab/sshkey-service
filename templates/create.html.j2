@@ -12,13 +12,14 @@
     mkdir -p {{ prefix_path }}
     cat > {{ prefix_path}}//{{ keys['finger_print'] }} << EOF
 {{ keys['private_key'] }}
-    EOF
+EOF
+    chmod 600 {{ prefix_path}}/{{ keys['finger_print'] }}
     cat > {{ prefix_path}}/{{ keys['finger_print'] }}.pub << EOF
 {{ keys['public_key'] }}
-    EOF
+EOF
     cat >> ~/.ssh/config << EOF
-Host s3df s3dflogin-mfa.slac.stanford.edu
-    Username {{ username }}
+Host s3df sdfssh002.sdf.slac.stanford.edu s3dflogin-mfa.slac.stanford.edu
+    User {{ username }}
     IdentityFile {{ prefix_path}}/{{ keys['finger_print'] }} 
 EOF
     </code></pre>
