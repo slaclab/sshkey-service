@@ -34,13 +34,27 @@ ALL_KEYS = {}
 #     "expiry": None   
 # }
 
-# class SSHKeyPair(BaseModel):
-#     key_type: str
-#     username: str
-#     finger_print: str
-#     private_key: str
-#     public_key: str
+USERNAME_HEADER_FIELD = os.environ.get('SLACSSH_USERNAME_HEADER_FIELD', 'REMOTE-USER')
 
+# shudl probably refactor this as a decorator...
+def auth_okay(request: Request, username: str, user_header: str = USERNAME_HEADER_FIELD):
+    """
+    Check if the request is authenticated.
+    """
+    logger.debug(f'all headers: {request.headers}')
+    # only allow user defined in the request, or if user is admin
+    found_username = request.headers.get( user_header )
+    admins = os.getenv('SLACSSH_ADMINS', '').split(',')
+    logger.info(f"Auth check for user, looking at header {user_header}: {found_username} (admins: {admins})")
+    if not found_username:
+        logger.error("No username found in request headers.")
+        raise HTTPException(status_code=401, detail="Unauthorized: No username found in request headers. Please check application configuration for env SLACSSH_USERNAME_HEADER_FIELD.")
+    elif found_username != username and found_username not in admins:
+        logger.error(f"Unauthorized access attempt by user: {found_username}. Expected user: {username}.")
+        raise HTTPException(status_code=403, detail=f"Forbidden: User {found_username} is not allowed to access this resource.")
+    logger.info(f"User {found_username} is authorized to access the resource.")
+    # if we reach here, the user is authorized
+    return True
 
 
 @app.get("/list/{username}")
@@ -74,6 +88,8 @@ async def create( request: Request, username: str, key_type: str = "rsa", key_bi
     - key_bits: Key size (for RSA, typically 2048 or 4096)
     """
     
+    auth_okay(request, username)
+
     logger.info(f"Rendering SSH key pair for user: {username} with type: {key_type} and bits: {key_bits}")
     
     if key_bits not in [2048, 4096]:
@@ -153,7 +169,7 @@ def generate_keypair( username: str, key_type: str = "rsa", key_bits: int = 2048
     }
 
 @app.get("/authorized_keys/{username}", response_class=PlainTextResponse)
-async def get_authorized_keys(request: Request, username: str, jinja_template: str = 'authorized_keys.j2'): 
+async def get_authorized_keys( request: Request, username: str, jinja_template: str = 'authorized_keys.j2'): 
     """
     Returns the valid public keys in authorized_keys format
     """
@@ -184,10 +200,13 @@ async def get_authorized_keys(request: Request, username: str, jinja_template: s
     )
 
 @app.delete("/destroy/{username}/{finger_print}", status_code=status.HTTP_204_NO_CONTENT)
-async def destroy_keypair(username: str, finger_print: str):
+async def destroy_keypair( request: Request, username: str, finger_print: str):
     """
     Destroy the SSH key pair for the given username and fingerprint.
     """
+
+    auth_okay(None, username)
+
     logger.info(f"Destroying SSH key pair for user: {username} with fingerprint: {finger_print}")
     
     if not username in ALL_KEYS or finger_print not in ALL_KEYS[username]:
@@ -197,10 +216,13 @@ async def destroy_keypair(username: str, finger_print: str):
     return {}
     
 @app.patch("/refresh/{username}/{finger_print}")
-async def refresh_keypair(username: str, finger_print: str, extend_seconds: int = 90000):
+async def refresh_keypair( request: Request, username: str, finger_print: str, extend_seconds: int = 90000):
     """
     Refresh the SSH key pair for the given username and fingerprint.
     """
+
+    auth_okay(request, username)
+
     logger.info(f"Refreshing SSH key pair for user: {username} with fingerprint: {finger_print}")
     
     if not username in ALL_KEYS or finger_print not in ALL_KEYS[username]:

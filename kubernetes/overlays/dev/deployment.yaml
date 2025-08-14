@@ -42,8 +42,12 @@ spec:
         #   initialDelaySeconds: 30
         #   timeoutSeconds: 10
         env:
+        # http field to use to get the local username for someone logging in
+        - name: SLACSSH_USERNAME_HEADER_FIELD
+          value: x-vouch-idp-claims-name
+        # comma separated list of usernames whom shall be considered admins
         - name:  SLACSSH_ADMINS
-          value:  ytl     
+          value:  ytl
         ports:
         - containerPort:  8000
           name:  www
