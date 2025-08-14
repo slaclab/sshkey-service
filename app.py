@@ -108,7 +108,7 @@ async def create( request: Request, username: str, key_type: str = "rsa", key_bi
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def generate_keypair( username: str, key_type: str = "rsa", key_bits: int = 2048 ):
+def generate_keypair( username: str, key_type: str = "rsa", key_bits: int = 2048, valid_seconds: int = 90000, expires_seconds: int = 604,800 ):
     """
     Generate a new SSH key pair.
     Defaults to RSA 2048-bit key.
@@ -148,21 +148,31 @@ def generate_keypair( username: str, key_type: str = "rsa", key_bits: int = 2048
         'private_key': private_key,
         'public_key': key.get_base64(),
         'created_at': now,
-        'valid_until': now.add(hours=25),
-        'expires_at': now.add(days=30)
-    }   
+        'valid_until': now.add(seconds=valid_seconds),
+        'expires_at': now.add(seconds=expires_seconds)
+    }
 
 @app.get("/authorized_keys/{username}", response_class=PlainTextResponse)
 async def get_authorized_keys(request: Request, username: str, jinja_template: str = 'authorized_keys.j2'): 
     """
-    Returns the public key in authorized_keys format
+    Returns the valid public keys in authorized_keys format
     """
-    logger.info(f"Fetching authorized keys for user: {username}: {SSHKEYPAIR}")
+    logger.info(f"Fetching authorized keys for user: {username}")
     if not username in ALL_KEYS:
         raise HTTPException(status_code=404, detail=f"No SSH keys found for {username} generated yet. Call /generate-keypair first.")
     
-    keys = [ ALL_KEYS[username][finger_print] for finger_print in ALL_KEYS[username].keys() ]
-    
+    now = pendulum.now()
+
+    keys = []
+    # filter out expired keys or not valid keys
+    for finger_print in ALL_KEYS[username].keys():
+        if ALL_KEYS[username][finger_print]['valid_until'] > now \
+            and ALL_KEYS[username][finger_print]['expires_at'] > now \
+            and ALL_KEYS[username][finger_print]['valid_until'] < ALL_KEYS[username][finger_print]['expires_at']:
+            keys.append(ALL_KEYS[username][finger_print])
+
+    logger.info(f"Found {len(keys)} valid keys for user: {username}")
+
     return templates.TemplateResponse(
         name=jinja_template,  # Name of your Jinja2 template file
         request=request,    # Pass the request object
@@ -187,7 +197,7 @@ async def destroy_keypair(username: str, finger_print: str):
     return {}
     
 @app.patch("/refresh/{username}/{finger_print}")
-async def refresh_keypair(username: str, finger_print: str, extend_hours: int = 25):
+async def refresh_keypair(username: str, finger_print: str, extend_seconds: int = 90000):
     """
     Refresh the SSH key pair for the given username and fingerprint.
     """
@@ -197,7 +207,7 @@ async def refresh_keypair(username: str, finger_print: str, extend_hours: int = 
         raise HTTPException(status_code=404, detail=f"No SSH keys found for {username} with fingerprint {finger_print}.")
     
     # allow an extra number of hours
-    extension = pendulum.now().add(hours=extend_hours)
+    extension = pendulum.now().add(seconds=extend_seconds)
     # okay to extend validity
     if extension < ALL_KEYS[username][finger_print]['expires_at']:
        ALL_KEYS[username][finger_print]['valid_until'] = extension
