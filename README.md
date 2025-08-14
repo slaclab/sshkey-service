@@ -16,3 +16,37 @@ AuthorizedKeysCommand /usr/local/bin/fetch_authorized_keys.sh
 AuthorizedKeysCommandUser nobody
 ```
 to sshd_config
+
+# Testing
+
+basic data store at present. do not use the keys generated from this in anything put a development environment!
+
+create the venv using 
+
+```
+make dev
+```
+
+then start the web server with
+
+```
+make start-app
+```
+
+you can then curl or point your browser to create a keypair; this will spit out the commands that you need to run to configure your local node for ssh
+
+```
+curl localhost:8000/create/ytl
+```
+
+then you can list your tokens with
+
+```
+curl localhost:8000/list/ytl
+```
+
+for the sshd side, the script for `AuthorizedKeysCommand` would be 
+
+```
+curl localhost:8000/authorized_keys/ytl
+```
