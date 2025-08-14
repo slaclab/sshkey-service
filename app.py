@@ -9,7 +9,7 @@ import io
 import binascii
 from loguru import logger
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, status
 from fastapi.responses import PlainTextResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 
@@ -173,7 +173,7 @@ async def get_authorized_keys(request: Request, username: str, jinja_template: s
         }
     )
 
-@app.get("/destroy/{username}/{finger_print}")
+@app.delete("/destroy/{username}/{finger_print}", status_code=status.HTTP_204_NO_CONTENT)
 async def destroy_keypair(username: str, finger_print: str):
     """
     Destroy the SSH key pair for the given username and fingerprint.
@@ -184,7 +184,7 @@ async def destroy_keypair(username: str, finger_print: str):
         raise HTTPException(status_code=404, detail=f"No SSH keys found for {username} with fingerprint {finger_print}.")
     
     del ALL_KEYS[username][finger_print]
-    return True
+    return {}
     
 @app.patch("/refresh/{username}/{finger_print}")
 async def refresh_keypair(username: str, finger_print: str, extend_hours: int = 25):
