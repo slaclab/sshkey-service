@@ -1,0 +1,15 @@
+# git
+.git
+.gitignore
+
+# Ignore Python specific files and directories
+__pycache__/
+*.pyc
+*.pyo
+.Python
+env/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# penv
+slac-ssh-mfa/
