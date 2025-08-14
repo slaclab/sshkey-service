@@ -64,6 +64,9 @@ async def list( request: Request, username: str, jinja_template: str = 'list.htm
     """
     logger.info(f"Listing SSH key pair for user: {username}")
     
+    auth_okay(request, username)
+
+    
     if not username in ALL_KEYS:
         raise HTTPException(status_code=404, detail=f"No SSH keys found for {username}. Call /create first.")
 
@@ -205,7 +208,7 @@ async def destroy_keypair( request: Request, username: str, finger_print: str):
     Destroy the SSH key pair for the given username and fingerprint.
     """
 
-    auth_okay(None, username)
+    auth_okay(request, username)
 
     logger.info(f"Destroying SSH key pair for user: {username} with fingerprint: {finger_print}")
     
