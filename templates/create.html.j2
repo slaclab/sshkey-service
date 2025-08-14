@@ -10,12 +10,14 @@
     # save the private and public keys to local disk
     # do we really want to use the finger_print as the filename? how do keep the local files purged of useless keys?
     mkdir -p {{ prefix_path }}
+    chmod 700 {{ prefix_path }}
     cat > {{ prefix_path}}//{{ keys['finger_print'] }} << EOF
 {{ keys['private_key'] }}
     EOF
     cat > {{ prefix_path}}/{{ keys['finger_print'] }}.pub << EOF
 {{ keys['public_key'] }}
     EOF
+    chmod 600 {{ prefix_path}}//{{ keys['finger_print'] }}{,.pub}
     cat >> ~/.ssh/config << EOF
 Host s3df s3dflogin-mfa.slac.stanford.edu
     Username {{ username }}
