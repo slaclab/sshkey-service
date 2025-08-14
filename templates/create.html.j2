@@ -6,7 +6,7 @@
 <body>
     <h1>{{ username }}</h1>
     <p>{{ message }}</p>
-    <code>
+    <pre><code>
     # save the private and public keys to local disk
     # do we really want to use the finger_print as the filename? how do keep the local files purged of useless keys?
     mkdir -p {{ prefix_path }}
@@ -21,4 +21,5 @@ Host s3df s3dflogin-mfa.slac.stanford.edu
     Username {{ username }}
     IdentityFile {{ prefix_path}}/{{ keys['finger_print'] }} 
 EOF
+    </code></pre>
 </html>
