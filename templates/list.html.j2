@@ -6,7 +6,7 @@
 <body>
     <h1>{{ username }}</h1>
     <p>{{ message }}</p>
-    <table>
+    <table id="mykeys">
     <tr>
         <th>finger print</th>
         <th>created_at</th>
@@ -15,7 +15,7 @@
         <th>action</th>
     </tr>
 {% for key in keys %}
-    <tr>
+    <tr data-fingerprint="{{ key['finger_print'] }}">
 
     <td>
 {{ key['finger_print'] }} 
@@ -31,14 +31,45 @@
     </td>
 
     <td>
-    <button>Refresh</button>
-    <button>Destroy</button>
+    <button class="refresh">Refresh</button>
+    <button class="destroy">Destroy</button>
     </td>
-    
+
 
 
 
     </tr>
 {% endfor %}
     </table>
+
+<script type="text/javascript">
+    const username = "{{ username }}";
+
+    const fpoperation = function(url, method) {
+        fetch(url, { "method": method })
+        .then(response => {
+            if (response.ok) {
+              return response.text();
+            } else {
+              throw new Error(`Server error: ${response.status}`);
+            }
+        })
+        .then(data => {
+            console.log("Reloading the page");
+            window.location.reload();
+        })
+        .catch(error => {
+            alert('Fetch error:', error);
+        })
+    }
+    
+    document.querySelectorAll(".refresh").forEach((el) => el.addEventListener("click", (ev) => {
+        const fingerprint = ev.currentTarget.closest("tr").getAttribute("data-fingerprint");
+        fpoperation(`../refresh/${username}/${fingerprint}`, "PATCH");
+    }))
+    document.querySelectorAll(".destroy").forEach((el) => el.addEventListener("click", (ev) => {
+        const fingerprint = ev.currentTarget.closest("tr").getAttribute("data-fingerprint");
+        fpoperation(`../destroy/${username}/${fingerprint}`, "DELETE");
+    }))
+</script>    
 </html>
