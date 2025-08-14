@@ -22,4 +22,5 @@ Host s3df s3dflogin-mfa.slac.stanford.edu
     IdentityFile {{ prefix_path}}/{{ keys['finger_print'] }} 
 EOF
     </code></pre>
+    This keypair was created_at {{ keys['created_at'] }}, valid_until {{ keys['valid_until']}} and will expires_at {{ keys['expires_at'] }}.
 </html>
