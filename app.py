@@ -87,8 +87,12 @@ async def create( request: Request, username: str, key_type: str = "rsa", key_bi
 
         if not username in ALL_KEYS:
             ALL_KEYS[username] = {}
+
+        # make sure we do not store the private key
         ALL_KEYS[username][bundle['finger_print']] = bundle
-        
+        show = ALL_KEYS[username][bundle['finger_print']].copy()
+        bundle['private_key'] = None
+
         return templates.TemplateResponse(
             name=jinja_template,  # Name of your Jinja2 template file
             request=request,    # Pass the request object
@@ -96,7 +100,7 @@ async def create( request: Request, username: str, key_type: str = "rsa", key_bi
                 "title": "ssh hackapp", 
                 "username": username, 
                 "prefix_path": "~/.ssh/s3df",
-                "keys": ALL_KEYS[username][bundle['finger_print']],
+                "keys": show,
             }
         )
 
