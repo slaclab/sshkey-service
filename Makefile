@@ -1,5 +1,7 @@
 ENVIRONMENT := slac-ssh-mfa
-
+CONTAINER_NAME := slaclab/slac-ssh-mfa
+CONTAINER_TAG := latest
+CONTAINER_RT := sudo podman
 
 
 dev:
@@ -12,3 +14,10 @@ clean-dev:
 
 start-app:
 	$(ENVIRONMENT)/bin/python3 app.py 	
+
+build:
+	$(CONTAINER_RT) build -t $(CONTAINER_NAME):$(CONTAINER_TAG) .
+
+push:
+	$(CONTAINER_RT) push $(CONTAINER_NAME):$(CONTAINER_TAG)
+
