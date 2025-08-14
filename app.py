@@ -170,6 +170,20 @@ async def get_authorized_keys(request: Request, username: str, jinja_template: s
             "keys": keys
         }
     )
+
+@app.get("/destroy/{username}/{finger_print}")
+async def destroy_keypair(username: str, finger_print: str):
+    """
+    Destroy the SSH key pair for the given username and fingerprint.
+    """
+    logger.info(f"Destroying SSH key pair for user: {username} with fingerprint: {finger_print}")
+    
+    if not username in ALL_KEYS or finger_print not in ALL_KEYS[username]:
+        raise HTTPException(status_code=404, detail=f"No SSH keys found for {username} with fingerprint {finger_print}.")
+    
+    del ALL_KEYS[username][finger_print]
+    return True
+    
     
 if __name__ == "__main__":
     import uvicorn
