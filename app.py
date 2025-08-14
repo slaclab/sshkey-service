@@ -108,7 +108,7 @@ async def create( request: Request, username: str, key_type: str = "rsa", key_bi
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def generate_keypair( username: str, key_type: str = "rsa", key_bits: int = 2048, valid_seconds: int = 90000, expires_seconds: int = 604,800 ):
+def generate_keypair( username: str, key_type: str = "rsa", key_bits: int = 2048, valid_seconds: int = 90000, expires_seconds: int = 604800 ):
     """
     Generate a new SSH key pair.
     Defaults to RSA 2048-bit key.
