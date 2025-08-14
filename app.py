@@ -158,7 +158,7 @@ def generate_keypair( username: str, key_type: str = "rsa", key_bits: int = 2048
     # private
     private_key_string_io = io.StringIO()
     key.write_private_key(private_key_string_io)
-    private_key = private_key_string_io.getvalue() 
+    private_key = private_key_string_io.getvalue()
     
     now = pendulum.now()
     # obtain a fingerprint that should be the same as that reported by sshd when key is used
