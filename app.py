@@ -166,7 +166,8 @@ def generate_keypair( username: str, key_type: str = "rsa", key_bits: int = 2048
     sha256 = hashlib.sha256()
     sha256.update(base64.b64decode(public_key))
     hash_sha256 = sha256.digest()
-    finger_print = f"SHA256:{base64.b64encode(hash_sha256).decode('utf-8').replace('/','.')}"
+    # remove trailing '=' and replace '/' with '.' since we can't have filenames with '/' in them
+    finger_print = f"SHA256:{base64.b64encode(hash_sha256).decode('utf-8').rstrip('=').replace('/','.')}"
 
     return {
         'key_type': key.get_name(),
