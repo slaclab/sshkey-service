@@ -186,7 +186,30 @@ async def destroy_keypair(username: str, finger_print: str):
     del ALL_KEYS[username][finger_print]
     return True
     
-
+@app.patch("/refresh/{username}/{finger_print}")
+async def refresh_keypair(username: str, finger_print: str, extend_hours: int = 25):
+    """
+    Refresh the SSH key pair for the given username and fingerprint.
+    """
+    logger.info(f"Refreshing SSH key pair for user: {username} with fingerprint: {finger_print}")
+    
+    if not username in ALL_KEYS or finger_print not in ALL_KEYS[username]:
+        raise HTTPException(status_code=404, detail=f"No SSH keys found for {username} with fingerprint {finger_print}.")
+    
+    # allow an extra number of hours
+    extension = pendulum.now().add(hours=extend_hours)
+    # okay to extend validity
+    if extension < ALL_KEYS[username][finger_print]['expires_at']:
+       ALL_KEYS[username][finger_print]['valid_until'] = extension
+    # extend upto the expiry
+    elif extension > ALL_KEYS[username][finger_print]['expires_at']:
+        # extend the expiry date
+        ALL_KEYS[username][finger_print]['valid_until'] = ALL_KEYS[username][finger_print]['expires_at'] 
+    # nope
+    else:
+        raise HTTPException(status_code=400, detail="Cannot extend beyond the expiry date.")
+    
+    return True
 
     
 if __name__ == "__main__":
