@@ -6,6 +6,7 @@
 <body>
     <h1>{{ username }}</h1>
     <p>{{ message }}</p>
+
     <pre><code>
 # do we really want to use the finger_print as the filename? how do keep the local files purged of useless keys?
 # setup the local directories for the keypairs
@@ -26,8 +27,11 @@ keys=$(find {{ prefix_path }} -type f)
 # add s3df ssh dropin config
 cat > {{ prefix_path }}/s3df.conf << EOF
 Host s3df sdfssh002.sdf.slac.stanford.edu s3dflogin-mfa.slac.stanford.edu
-$(for k in $keys; do echo "    IdentityFile {{ prefix_path}}/$k"; done)
+$(for k in $keys; do echo "    IdentityFile {{ prefix_path }}/$k"; done)
 EOF
     </code></pre>
-    This keypair ({{ keys['finger_print'] }}) was created_at {{ keys['created_at'] }}, valid_until {{ keys['valid_until']}} and will expires_at {{ keys['expires_at'] }}.
+
+
+
+    This keypair ({{ keys['finger_print'] }}) was created_at {{ keys['created_at'] }}, valid_until {{ keys['valid_until'] }} and will expires_at {{ keys['expires_at'] }}.
 </html>
