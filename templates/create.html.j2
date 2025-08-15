@@ -31,7 +31,6 @@ $(for k in $keys; do echo "    IdentityFile {{ prefix_path }}/$k"; done)
 EOF
     </code></pre>
 
+    <p>This keypair ({{ keys['finger_print'] }}) was created_at {{ keys['created_at'] }} from source_ip {{ keys['source_ip'] }}, valid_until {{ keys['valid_until']}} and will expires_at {{ keys['expires_at'] }}.</p>
 
-
-    This keypair ({{ keys['finger_print'] }}) was created_at {{ keys['created_at'] }}, valid_until {{ keys['valid_until'] }} and will expires_at {{ keys['expires_at'] }}.
 </html>
