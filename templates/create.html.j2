@@ -24,7 +24,7 @@ grep -q "Include {{ prefix_path }}/s3df.conf" ~/.ssh/config || echo "Include {{ 
 
 # add s3df ssh dropin config
 cat > {{ prefix_path }}/s3df.conf << EOF
-Host s3df sdfssh002.sdf.slac.stanford.edu s3dflogin-mfa.slac.stanford.edu
+Host s3df sdfssh001.sdf.slac.stanford.edu sdfssh002.sdf.slac.stanford.edu s3dflogin-mfa.slac.stanford.edu
 $(find {{ prefix_path }} -type f -name 'SHA256:*' -print0 | xargs -0 -n1 echo '    IdentityFile ')
 EOF
     </code></pre>
