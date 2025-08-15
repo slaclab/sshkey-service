@@ -11,21 +11,22 @@
 # setup the local directories for the keypairs
 mkdir -p {{ prefix_path }}
 chmod 700 {{ prefix_path }}
-# save the private key to local disk: note that we do not keep this on our servers. if you loosse this, you will need to recreate a new keypair
-cat > {{ prefix_path}}/{{ keys['finger_print'] }} << EOF
+
+# save the private key to local disk and your SSH agent; note that we do not keep this on our servers. if you loosse this, you will need to recreate a new keypair
+cat > {{ prefix_path }}/{{ keys['finger_print'] }} << EOF
 {{ keys['private_key'] }}
 EOF
-chmod 600 {{ prefix_path}}/{{ keys['finger_print'] }}
-# save the public key to local disk
-cat > {{ prefix_path}}/{{ keys['finger_print'] }}.pub << EOF
-{{ keys['public_key'] }}
-EOF
-chmod 600 {{ prefix_path}}//{{ keys['finger_print'] }}.pub
-# add the key to the ssh config file
-cat >> ~/.ssh/config << EOF
+chmod 600 {{ prefix_path }}/{{ keys['finger_print'] }}
+
+# include the s3df config in ssh config
+grep -q "Include {{ prefix_path }}/s3df.conf" ~/.ssh/config || echo "Include {{ prefix_path }}/s3df.conf" >> ~/.ssh/config
+
+# enumerate keys
+keys=$(find {{ prefix_path }} -type f)
+# add s3df ssh dropin config
+cat > {{ prefix_path }}/s3df.conf << EOF
 Host s3df sdfssh002.sdf.slac.stanford.edu s3dflogin-mfa.slac.stanford.edu
-    User {{ username }} # hmm... how to deal with multiple...
-    IdentityFile "{{ prefix_path}}/{{ keys['finger_print'] }}"
+$(for k in $keys; do echo "    IdentityFile {{ prefix_path}}/$k"; done)
 EOF
     </code></pre>
     This keypair ({{ keys['finger_print'] }}) was created_at {{ keys['created_at'] }}, valid_until {{ keys['valid_until']}} and will expires_at {{ keys['expires_at'] }}.
