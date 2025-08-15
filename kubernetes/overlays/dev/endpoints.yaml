@@ -14,6 +14,26 @@ spec:
 kind: Ingress
 apiVersion: networking.k8s.io/v1
 metadata:
+  name:  slac-ssh-mfa-frontpage # no auth required
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    # nginx.ingress.kubernetes.io/whitelist-source-range: 192.168.0.0/16,10.0.0.0/8,172.24.4.0/24,134.79.0.0/16
+spec:
+  rules:
+  - host:  slac-ssh-mfa.slac.stanford.edu
+    http:
+      paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: slac-ssh-mfa
+              port:
+                number: 8000
+---
+kind: Ingress
+apiVersion: networking.k8s.io/v1
+metadata:
   name:  slac-ssh-mfa-ingress
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: /$1/$2
@@ -37,7 +57,7 @@ spec:
   - host:  slac-ssh-mfa.slac.stanford.edu
     http:
       paths:
-        - path: /(create|list)/(\w+)
+        - path: /(create|list)/(\w+)?
           pathType: Prefix
           backend:
             service:

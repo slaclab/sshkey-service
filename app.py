@@ -10,7 +10,7 @@ import binascii
 from loguru import logger
 
 from fastapi import FastAPI, Request, status
-from fastapi.responses import PlainTextResponse, HTMLResponse
+from fastapi.responses import PlainTextResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 import pendulum
@@ -39,39 +39,49 @@ ALL_KEYS = {}
 
 USERNAME_HEADER_FIELD = os.environ.get('SLACSSH_USERNAME_HEADER_FIELD', 'REMOTE-USER')
 
-# shudl probably refactor this as a decorator...
-def auth_okay(request: Request, username: str, user_header: str = USERNAME_HEADER_FIELD):
+
+def auth(request: Request, user_header: str = USERNAME_HEADER_FIELD):
     """
     Check if the request is authenticated.
     """
-    #logger.debug(f'all headers: {request.headers}')
     # only allow user defined in the request, or if user is admin
     found_username = request.headers.get( user_header )
-    admins = os.getenv('SLACSSH_ADMINS', '').split(',')
-    logger.info(f"Auth check for user, looking at header {user_header}: {found_username} (admins: {admins})")
+    logger.info(f"Found user {found_username} (looking at header {user_header})")
     if not found_username:
         logger.error("No username found in request headers.")
         raise HTTPException(status_code=401, detail="Unauthorized: No username found in request headers. Please check application configuration for env SLACSSH_USERNAME_HEADER_FIELD.")
-    elif found_username != username and found_username not in admins:
+    # if we reach here, the user is authorized
+    return found_username
+
+# shudl probably refactor this as a decorator...
+def auth_okay(request: Request, username: str, user_header: str = USERNAME_HEADER_FIELD):
+    """
+    Check if the logged in user is expected to be allowed to access this resource
+    """
+    #logger.debug(f'all headers: {request.headers}')
+    # only allow user defined in the request, or if user is admin
+    admins = os.getenv('SLACSSH_ADMINS', '').split(',')
+    found_username = auth(request, user_header)
+    if found_username != username and found_username not in admins:
         logger.error(f"Unauthorized access attempt by user: {found_username}. Expected user: {username}.")
         raise HTTPException(status_code=403, detail=f"Forbidden: User {found_username} is not allowed to access this resource.")
     logger.info(f"User {found_username} is authorized to access the resource.")
-    # if we reach here, the user is authorized
-    return True
+    # if we reach here, the user is good
+    return found_username
 
 
 @app.get("/list/{username}")
-async def list( request: Request, username: str, jinja_template: str = 'list.html.j2' ):
+async def list_user_keypair( request: Request, username: str, jinja_template: str = 'list.html.j2' ):
     """
     List the SSH key pair for the given username.
     """
     logger.info(f"Listing SSH key pair for user: {username}")
     
-    auth_okay(request, username)
+    found_username = auth_okay(request, username)
 
-
-    if not username in ALL_KEYS:
-        raise HTTPException(status_code=404, detail=f"No SSH keys found for {username}. Call /create first.")
+    keys = []
+    if username in ALL_KEYS:
+        keys = [ ALL_KEYS[username][finger_print] for finger_print in ALL_KEYS[username].keys() ]
 
     return templates.TemplateResponse(
         name=jinja_template,  # Name of your Jinja2 template file
@@ -79,13 +89,13 @@ async def list( request: Request, username: str, jinja_template: str = 'list.htm
         context={
             "title": "list",
             "username": username, 
-            "keys": [ ALL_KEYS[username][finger_print] for finger_print in ALL_KEYS[username].keys() ],
+            "keys": keys
         }
     )
 
 
 @app.get("/create/{username}")
-async def create( request: Request, username: str, key_type: str = "rsa", key_bits: int = 2048, jinja_template: str = 'create.html.j2', source_ip_header_field: str = 'x-real-ip', valid_seconds: int = 90000, expires_seconds: int = 604800 ):
+async def create_user_keypair( request: Request, username: str, key_type: str = "rsa", key_bits: int = 2048, jinja_template: str = 'create.html.j2', source_ip_header_field: str = 'x-real-ip', valid_seconds: int = 90000, expires_seconds: int = 604800 ):
     """
     Generate and return a webpage containing instructions on how to use the keypair.
     Defaults to RSA 2048-bit key.
@@ -94,7 +104,7 @@ async def create( request: Request, username: str, key_type: str = "rsa", key_bi
     - key_bits: Key size (for RSA, typically 2048 or 4096)
     """
     
-    auth_okay(request, username)
+    found_username = auth_okay(request, username)
 
     logger.info(f"Rendering SSH key pair for user: {username} with type: {key_type} and bits: {key_bits}")
     
@@ -218,12 +228,12 @@ async def get_authorized_keys( request: Request, username: str, jinja_template: 
     )
 
 @app.delete("/destroy/{username}/{finger_print}", status_code=status.HTTP_204_NO_CONTENT)
-async def destroy_keypair( request: Request, username: str, finger_print: str):
+async def destroy_user_keypair( request: Request, username: str, finger_print: str):
     """
     Destroy the SSH key pair for the given username and fingerprint.
     """
 
-    auth_okay(request, username)
+    found_username = auth_okay(request, username)
 
     logger.info(f"Destroying SSH key pair for user: {username} with fingerprint: {finger_print}")
     
@@ -234,12 +244,12 @@ async def destroy_keypair( request: Request, username: str, finger_print: str):
     return {}
     
 @app.patch("/refresh/{username}/{finger_print}")
-async def refresh_keypair( request: Request, username: str, finger_print: str, extend_seconds: int = 90000):
+async def refresh_user_keypair( request: Request, username: str, finger_print: str, extend_seconds: int = 90000):
     """
     Refresh the SSH key pair for the given username and fingerprint.
     """
 
-    auth_okay(request, username)
+    found_username = auth_okay(request, username)
 
     logger.info(f"Refreshing SSH key pair for user: {username} with fingerprint: {finger_print}")
     
@@ -262,6 +272,35 @@ async def refresh_keypair( request: Request, username: str, finger_print: str, e
     return True
 
     
+@app.get("/")
+async def index( request: Request, jinja_template: str = 'index.html.j2'):
+    return templates.TemplateResponse(
+        name=jinja_template,  # Name of your Jinja2 template file
+        request=request,    # Pass the request object
+        context={
+            "title": "slac ssh server", 
+        }
+    )
+
+@app.get("/list/", response_class=HTMLResponse)
+async def list( request: Request ):
+    """
+    Redirect to the personal keypair list page.
+    """
+    found_username = auth(request)
+    return RedirectResponse(url=f"/list/{found_username}")
+
+
+@app.get("/create/", response_class=HTMLResponse)
+async def create( request: Request ):
+    """
+    Redirect to the personal create keypaior page.
+    """
+    found_username = auth(request)
+    return RedirectResponse(url=f"/create/{found_username}")
+
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

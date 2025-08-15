@@ -5,7 +5,9 @@
 </head>
 <body>
     <h1>{{ username }}</h1>
-    <p>{{ message }}</p>
+    
+    <p>create new keypair <button onclick="window.location.href='/create/{{ username }}'" class="create">Create</button></p>
+
     <table id="mykeys">
     <tr>
         <th>finger print</th>
