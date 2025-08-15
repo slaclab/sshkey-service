@@ -151,7 +151,7 @@ def generate_keypair( key_type: str = "rsa", key_bits: int = 2048, valid_seconds
     """
 
     logger.info(f"Generating {key_bits} bit {key_type} ssh keypair...")
-    
+
     key = None
     if key_type == "rsa":
         key = paramiko.RSAKey.generate(bits=key_bits)
@@ -176,7 +176,7 @@ def generate_keypair( key_type: str = "rsa", key_bits: int = 2048, valid_seconds
     sha256.update(base64.b64decode(public_key))
     hash_sha256 = sha256.digest()
     # remove trailing '=' and replace '/' with '.' since we can't have filenames with '/' in them
-    finger_print = f"SHA256:{base64.b64encode(hash_sha256).decode('utf-8').rstrip('=').replace('/','.')}"
+    finger_print = f"SHA256:{base64.b64encode(hash_sha256).decode('utf-8').rstrip('=').replace('/','.').replace('+','.')}"
 
     return {
         'key_type': key.get_name(),
