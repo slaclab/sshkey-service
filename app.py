@@ -31,6 +31,7 @@ ALL_KEYS = {}
 #     "finger_print": None,
 #     "private_key": None,
 #     "public_key": None,
+#     "source_ip": None,
 #     "created_at": None,
 #     "valid_until": None,
 #     "expiry": None   
@@ -84,7 +85,7 @@ async def list( request: Request, username: str, jinja_template: str = 'list.htm
 
 
 @app.get("/create/{username}")
-async def create( request: Request, username: str, key_type: str = "rsa", key_bits: int = 2048, jinja_template: str = 'create.html.j2' ):
+async def create( request: Request, username: str, key_type: str = "rsa", key_bits: int = 2048, jinja_template: str = 'create.html.j2', source_ip_header_field: str = 'x-real-ip', valid_seconds: int = 90000, expires_seconds: int = 604800 ):
     """
     Generate and return a webpage containing instructions on how to use the keypair.
     Defaults to RSA 2048-bit key.
@@ -104,7 +105,17 @@ async def create( request: Request, username: str, key_type: str = "rsa", key_bi
         )
 
     try:
-        bundle = generate_keypair(username, key_type, key_bits)
+        bundle = generate_keypair( key_type, key_bits)
+
+        # update timestamps, source_ip and user information
+        now = pendulum.now()        
+        bundle.update( {
+            'username': username,
+            'source_ip': request.headers.get(source_ip_header_field, request.client.host),
+            'created_at': now,
+            'valid_until': now.add(seconds=valid_seconds),
+            'expires_at': now.add(seconds=expires_seconds)
+        } )
 
         if not username in ALL_KEYS:
             ALL_KEYS[username] = {}
@@ -129,7 +140,7 @@ async def create( request: Request, username: str, key_type: str = "rsa", key_bi
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def generate_keypair( username: str, key_type: str = "rsa", key_bits: int = 2048, valid_seconds: int = 90000, expires_seconds: int = 604800 ):
+def generate_keypair( key_type: str = "rsa", key_bits: int = 2048, valid_seconds: int = 90000, expires_seconds: int = 604800 ):
     """
     Generate a new SSH key pair.
     Defaults to RSA 2048-bit key.
@@ -139,10 +150,9 @@ def generate_keypair( username: str, key_type: str = "rsa", key_bits: int = 2048
     - comment: Comment to include in the public key
     """
 
-    logger.info(f"Generating SSH key pair for user: {username} with type: {key_type} and bits: {key_bits}")
-
-    key = None
+    logger.info(f"Generating {key_bits} bit {key_type} ssh keypair...")
     
+    key = None
     if key_type == "rsa":
         key = paramiko.RSAKey.generate(bits=key_bits)
     elif key_type == "dsa":
@@ -160,7 +170,6 @@ def generate_keypair( username: str, key_type: str = "rsa", key_bits: int = 2048
     key.write_private_key(private_key_string_io)
     private_key = private_key_string_io.getvalue()
     
-    now = pendulum.now()
     # obtain a fingerprint that should be the same as that reported by sshd when key is used
     public_key = key.get_base64() 
     sha256 = hashlib.sha256()
@@ -171,14 +180,11 @@ def generate_keypair( username: str, key_type: str = "rsa", key_bits: int = 2048
 
     return {
         'key_type': key.get_name(),
-        'username': username,
         'finger_print': finger_print,
         'private_key': private_key,
         'public_key': public_key,
-        'created_at': now,
-        'valid_until': now.add(seconds=valid_seconds),
-        'expires_at': now.add(seconds=expires_seconds)
     }
+
 
 @app.get("/authorized_keys/{username}", response_class=PlainTextResponse)
 async def get_authorized_keys( request: Request, username: str, jinja_template: str = 'authorized_keys.j2'): 

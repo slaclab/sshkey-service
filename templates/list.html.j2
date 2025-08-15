@@ -10,6 +10,7 @@
     <tr>
         <th>finger print</th>
         <th>created_at</th>
+        <th>source_ip</th>
         <th>valid_until</th>
         <th>expires_at</th>
         <th>action</th>
@@ -22,6 +23,9 @@
     </td>
     <td>
 {{ key['created_at'] }} 
+    </td>
+    <td>
+{{ key['source_ip'] }}
     </td>
     <td>
 {{ key['valid_until'] }} 
