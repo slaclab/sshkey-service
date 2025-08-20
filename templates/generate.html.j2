@@ -45,6 +45,9 @@ Host sdfssh001 sdfssh001.slac.stanford.edu sdfssh001.sdf.slac.stanford.edu sdfss
 $(find {{ prefix_path }} -type f -name 'SHA256:*' ! -name '*.pub' -print0 | xargs -0 -n1 echo '    IdentityFile ')
 EOF
 
+echo
+echo
+
 # determine the public key for your newly minted keypair - this must be uploaded to our servers so that you can use this keypair to access S3DF
 ssh-keygen -e -f {{ prefix_path }}/${fingerprint}
 
