@@ -407,11 +407,19 @@ async def list( request: Request ):
 @app.get("/create/", response_class=HTMLResponse)
 async def create( request: Request ):
     """
-    Redirect to the personal create keypaior page.
+    Redirect to the personal create keypair page.
     """
     found_username = auth(request)
     return RedirectResponse(url=f"/create/{found_username}")
 
+
+@app.get("/generate/", response_class=HTMLResponse)
+async def create( request: Request ):
+    """
+    Redirect to the personal generate keypair page.
+    """
+    found_username = auth(request)
+    return RedirectResponse(url=f"/generate/{found_username}")
 
 
 if __name__ == "__main__":

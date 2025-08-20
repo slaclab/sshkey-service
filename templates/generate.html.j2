@@ -18,6 +18,9 @@
 
     <p>This page provides instructions for generating a new SSH keypair for use with S3DF. Specifically, we present shell commands that you should paste into your local (eg laptop) terminal that will create a SSH private and public keypair. You will then be able to utilize this keypair to SSH into S3DF without having to always enter a username, password and 2factor (duo).</p>
     
+    <p>Our implementation also considers the use of time limited SSH keys, so the generated keypair that is only valid for a limited time period. This is currently set to a maximum of 7 days. For further security, you will also need to <a href="/list/{{ username }}">refresh'</a> your keys at least every 25 hours for the keypair to be valid.</p>
+    <p>You may generate as may keypairs as you like and on as many computers as you like. However, you must register each public key with our service before you can use it to access S3DF.</p>
+
     <p>To create a new private key, please use the enter commands on the computer terminal:</p>
 
     <pre><code>
@@ -123,9 +126,5 @@ ssh-keygen -e -f {{ prefix_path }}/${fingerprint}
     });
 
 </script>
-
-    <p>Our implementation also considers the use of time limited SSH keys, so the generated keypair that is only valid for a limited time period. This is currently set to a maximum of 7 days. For further security, you will also need to <a href="/list/{{ username }}>refresh'</a> your keys at least every 25 hours.</p>
-    <p>You may generate as may keypairs as you like and on as many computers as you like. However, you must register each public key with our service before you can use it to access S3DF.</p>
-
 
 </html>
