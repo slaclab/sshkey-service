@@ -20,7 +20,7 @@ EOF
 chmod 600 {{ prefix_path }}/{{ keys['finger_print'] }}
 
 # include the s3df config in ssh config
-grep -q "Include {{ prefix_path }}/s3df.conf" ~/.ssh/config || sed -i '1s@^@Include {{ prefix_path }}/s3df.conf\n\n@' >> ~/.ssh/config
+grep -q "Include {{ prefix_path }}/s3df.conf" ~/.ssh/config || sed -i '1s@^@Include {{ prefix_path }}/s3df.conf\n\n@' ~/.ssh/config
 
 # add s3df ssh dropin config
 cat > {{ prefix_path }}/s3df.conf << EOF
