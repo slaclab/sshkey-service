@@ -19,6 +19,9 @@ import base64
 
 templates = Jinja2Templates(directory="templates")
 
+class PublicKey(BaseModel):
+    public_key: str
+
 app = FastAPI()
 
 # In-memory storage for the key pair (in production, use a database), nested dict of username and key fingerprint
@@ -215,23 +218,27 @@ async def generate_user_keypair( request: Request, username: str, key_type: str 
         }
     )
 
+
+
 @app.post("/upload/{username}")
-async def upload_user_public_key( request: Request, username: str, public_key: str, source_ip_header_field: str = 'x-real-ip', valid_seconds: int = 90000, expires_seconds: int = 604800  ):
+async def upload_user_public_key( request: Request, username: str, public_key: PublicKey, source_ip_header_field: str = 'x-real-ip', valid_seconds: int = 90000, expires_seconds: int = 604800  ):
     """ Uploads the public key for the given username.
     """
     found_username = auth_okay(request, username)
 
     logger.info(f"Uploading public key for user: {username}")
 
+    pubkey = paramiko.pkey.PKey(data=public_key.public_key.strip())
+    fingerprint = pubkey.fingerprint
     # shoudl check if the public key is already registered
 
     # update timestamps, source_ip and user information
-    now = pendulum.now()        
+    now = pendulum.now()
     bundle = {
         'username': username,
-        'public_key': public_key.strip(),
+        'public_key': public_key.public_key.strip(),
         'key_type': None, # will be calculated later
-        'finger_print': None,  # will be calculated later
+        'finger_print': fingerprint,
     }
 
     # determine time ranges
@@ -241,6 +248,14 @@ async def upload_user_public_key( request: Request, username: str, public_key: s
         'valid_until': now.add(seconds=valid_seconds),
         'expires_at': now.add(seconds=expires_seconds)
     } ) 
+
+    # make sure we do not store the private key
+    bundle['private_key'] = None
+
+    if not username in ALL_KEYS:
+        ALL_KEYS[username] = {}
+
+    ALL_KEYS[username][bundle['finger_print']] = bundle
 
     return True
 
