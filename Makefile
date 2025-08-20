@@ -6,6 +6,7 @@ DOCKERHUB_USERNAME := slaclab
 CONTAINER_PREFIX := docker.io
 
 dev:
+    #hmm... need libffi-dev
 	python3 -m venv $(ENVIRONMENT)
 	cd $(ENVIRONMENT) && ./bin/pip install  -r ../requirements.txt
 

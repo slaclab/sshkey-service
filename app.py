@@ -196,6 +196,56 @@ def generate_keypair( key_type: str = "rsa", key_bits: int = 2048, valid_seconds
     }
 
 
+@app.get("/generate/{username}")
+async def generate_user_keypair( request: Request, username: str, key_type: str = "ed25519", key_bits: int = 2048, jinja_template: str = 'generate.html.j2'):
+    """
+    shows instructions for how to create a keypair and upload it to us
+    """
+    found_username = auth_okay(request, username)
+
+    logger.info(f"Generating SSH key pair for user: {username} with type: {key_type} and bits: {key_bits}")
+
+    return templates.TemplateResponse(
+        name=jinja_template,  # Name of your Jinja2 template file
+        request=request,    # Pass the request object
+        context={
+            "title": "s3df ssh keypair service", 
+            "username": username, 
+            "prefix_path": "~/.ssh/s3df"
+        }
+    )
+
+@app.post("/upload/{username}")
+async def upload_user_public_key( request: Request, username: str, public_key: str, source_ip_header_field: str = 'x-real-ip', valid_seconds: int = 90000, expires_seconds: int = 604800  ):
+    """ Uploads the public key for the given username.
+    """
+    found_username = auth_okay(request, username)
+
+    logger.info(f"Uploading public key for user: {username}")
+
+    # shoudl check if the public key is already registered
+
+    # update timestamps, source_ip and user information
+    now = pendulum.now()        
+    bundle = {
+        'username': username,
+        'public_key': public_key.strip(),
+        'key_type': None, # will be calculated later
+        'finger_print': None,  # will be calculated later
+    }
+
+    # determine time ranges
+    bundle.update( {
+        'source_ip': request.headers.get(source_ip_header_field, request.client.host),
+        'created_at': now,
+        'valid_until': now.add(seconds=valid_seconds),
+        'expires_at': now.add(seconds=expires_seconds)
+    } ) 
+
+    return True
+
+
+
 @app.get("/authorized_keys/{username}", response_class=PlainTextResponse)
 async def get_authorized_keys( request: Request, username: str, jinja_template: str = 'authorized_keys.j2'): 
     """

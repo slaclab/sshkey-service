@@ -57,7 +57,7 @@ spec:
   - host:  slac-ssh-mfa.slac.stanford.edu
     http:
       paths:
-        - path: /(create|list)/(\w+)?
+        - path: /(generate|create|list)/(\w+)?
           pathType: Prefix
           backend:
             service:
