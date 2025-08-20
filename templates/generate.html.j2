@@ -2,6 +2,15 @@
 <html>
 <head>
     <title>{{ title }}</title>
+    <style>
+        .d-none {
+            display: none;
+        }
+        .errmsg {
+            color: red;
+            font-weight: bold;
+        }
+    </style>
 </head>
 <body>
     <h1>{{ username }}</h1>
@@ -42,11 +51,72 @@ ssh-keygen -e -f {{ prefix_path }}/${fingerprint}
     <p>The output from the previous set of commands provides the ssh public key that we can use to identify you on our servers when you use this private key to ssh into our systems.</p>
     <p>Please enter this public key into the following form so that we may register it in our systems.</p>
 
-    <form action="/upload/{{ username }}" }}">
-        <textarea name="public_key" rows="10" cols="50" placeholder="Paste your public key here..."></textarea><br>
-        <input type="submit" value="Submit">
+    <form id="uploadpublickey" action="javascript:void(0);">
+        <p class="d-none errmsg"></p>
+        <textarea name="public_key" rows="10" cols="50" placeholder='---- BEGIN SSH2 PUBLIC KEY ----&#10;AAAABBBCCCDDDEEEFFFGGGHHH&#10;---- END SSH2 PUBLIC KEY ----'></textarea><br>
+        <button class="submitbtn">Submit</button>
     </form>
 
+<script type="text/javascript">
+    const clearerr = () => {
+        const vmsg = document.querySelector("#uploadpublickey p.errmsg");
+        vmsg.innerHTML = ``;
+        vmsg.classList.add("d-none");
+    }
+
+    const errmsg = (msg) => {
+        const vmsg = document.querySelector("#uploadpublickey p.errmsg");
+        vmsg.innerHTML = msg;
+        vmsg.classList.remove("d-none");
+    }
+
+    const postPutJSON = function(serverURL, method, thedocument, onCompletion, errormsg) {
+        async function checkHTTPResponse(resp) {
+            if(!resp.ok) {
+                console.log("Call to ", serverURL, " failed");
+                let respdata = await resp.text(); 
+                return Promise.reject(new Error(resp.statusText + " --> " + respdata));
+            }
+        return resp.json();
+    }
+
+    function checkStatus(status) {
+        console.log(status); 
+        onCompletion(); 
+        return true; 
+    }
+
+    fetch(serverURL, { method: method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(thedocument) })
+        .then(checkHTTPResponse)
+        .then(checkStatus)
+        .catch((msg) => { errormsg(msg) })
+    }
+
+
+    document.querySelector("#uploadpublickey .submitbtn").addEventListener("click", (ev) => {
+        clearerr();
+        const publickey = document.querySelector("#uploadpublickey textarea[name='public_key']").value;
+        if(publickey.length <= 10) {
+            errmsg(`Valid public keys cannot be empty strings or less than x characters long`);
+            return false;
+        }
+        if(publickey.toLowerCase().includes("private key")) {
+            errmsg(`Please don't paste the private key here`);
+            return false;
+        }
+        if(!publickey.toLowerCase().includes("public key")) {
+            errmsg(`Valid public keys typically include a comment string to indicate that this is a public key`);
+            return false;
+        }
+
+        const theDocument = {
+            public_key: publickey
+        };
+
+        postPutJSON("/upload/{{ username }}", "POST", theDocument, () => { window.location = "/list/{{ username }}";}, errmsg);
+    });
+
+</script>
 
 
 </html>
