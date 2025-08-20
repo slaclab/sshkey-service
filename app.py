@@ -10,7 +10,7 @@ import binascii
 from loguru import logger
 
 from fastapi import FastAPI, Request, status
-from fastapi.responses import PlainTextResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import PlainTextResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 import pendulum
@@ -26,19 +26,7 @@ app = FastAPI()
 
 # In-memory storage for the key pair (in production, use a database), nested dict of username and key fingerprint
 # This is a simple in-memory storage for demonstration purposes. please use a proper database in production.
-
 ALL_KEYS = {} 
-# SSHKEYPAIR = {
-#     "key_type": None,
-#     "username": None,
-#     "finger_print": None,
-#     "private_key": None,
-#     "public_key": None,
-#     "source_ip": None,
-#     "created_at": None,
-#     "valid_until": None,
-#     "expiry": None   
-# }
 
 USERNAME_HEADER_FIELD = os.environ.get('SLACSSH_USERNAME_HEADER_FIELD', 'REMOTE-USER')
 
@@ -214,10 +202,11 @@ async def generate_user_keypair( request: Request, username: str, key_type: str 
         context={
             "title": "s3df ssh keypair service", 
             "username": username, 
+            "key_type": key_type,
+            "key_bits": key_bits,
             "prefix_path": "~/.ssh/s3df"
         }
     )
-
 
 
 @app.post("/upload/{username}")
@@ -226,22 +215,78 @@ async def upload_user_public_key( request: Request, username: str, public_key: P
     """
     found_username = auth_okay(request, username)
 
-    logger.info(f"Uploading public key for user: {username}")
+    logger.info(f"Uploading public key for user: {username}: {public_key.public_key}")
 
-    pubkey = paramiko.pkey.PKey(data=public_key.public_key.strip())
-    fingerprint = pubkey.fingerprint
     # shoudl check if the public key is already registered
+    def determine_public_key(key: str) -> str:
+        """
+        Strips the public key of any comments or other unnecessary parts.
+        Returns the cleaned public key and its fingerprint.
+        """
+        found = None
 
+        # ---- BEGIN SSH2 PUBLIC KEY ----
+        # Comment: "256-bit ED25519, converted by ytl@yees-m3-mac.lan from OpenS"
+        # AAAAC3NzaC1lZDI1NTE5AAAAIGs4y2orDiyCSpY/12Psser9E+q9GzF7133Wu4wBtCqE
+        #---- END SSH2 PUBLIC KEY ----
+        in_key_block = False
+        key_data_base64 = ""
+        key_type = None
+        for line in public_key.public_key.splitlines():
+            if line.strip() == "---- BEGIN SSH2 PUBLIC KEY ----":
+                in_key_block = True
+                continue
+            elif line.strip() == "---- END SSH2 PUBLIC KEY ----":
+                break
+
+            if in_key_block:
+                if line.strip().startswith("Comment:"):
+                    # Extract key type from comment
+                    comment = line.strip().split(':', 1)[1].strip()
+                    if "ED25519" in comment:
+                        key_type = "ssh-ed25519"
+                    elif "RSA" in comment:
+                        key_type = "ssh-rsa"
+                    # Add other key types as needed
+                    continue
+                else:
+                    key_data_base64 += line.strip()
+
+        # error out if not valid
+        if not key_data_base64 or not key_type:
+            raise HTTPException(status_code=400, detail="Invalid public key format. Please ensure it is in the correct format.")
+
+        found = None
+        try:
+            found = paramiko.PKey.from_type_string(key_type, base64.b64decode(key_data_base64))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail="Could not parse the public key. Please ensure it is in the correct format.")
+        
+        # remove trailing '=' and replace '/' with '.' since we can't have filenames with '/' in them
+        finger_print = found.fingerprint.rstrip('=').replace('/','.').replace('+','.')
+        
+        logger.info(f"Found public key {finger_print}: {found}")
+        return finger_print, found
+
+    finger_print, pkey = determine_public_key(public_key)
+
+    # check if the public key is already registered
+    if not username in ALL_KEYS:
+        ALL_KEYS[username] = {}
+    if finger_print in ALL_KEYS[username]:
+        raise HTTPException(status_code=400, detail="Public key already registered for this fingerprint. Please upload a different public key or refresh the existing one.")
+                            
     # update timestamps, source_ip and user information
-    now = pendulum.now()
     bundle = {
         'username': username,
-        'public_key': public_key.public_key.strip(),
-        'key_type': None, # will be calculated later
-        'finger_print': fingerprint,
+        'finger_print': finger_print,
+        'public_key': pkey.get_base64(),
+        'key_type': pkey.get_name(),
+        'key_bits': pkey.get_bits(),
     }
 
     # determine time ranges
+    now = pendulum.now()        
     bundle.update( {
         'source_ip': request.headers.get(source_ip_header_field, request.client.host),
         'created_at': now,
@@ -249,16 +294,19 @@ async def upload_user_public_key( request: Request, username: str, public_key: P
         'expires_at': now.add(seconds=expires_seconds)
     } ) 
 
-    # make sure we do not store the private key
-    bundle['private_key'] = None
-
+    # store
     if not username in ALL_KEYS:
         ALL_KEYS[username] = {}
-
     ALL_KEYS[username][bundle['finger_print']] = bundle
+    
+    logger.info(f"Registered public key for user {username}: {finger_print}, created at {bundle['created_at']}, valid until {bundle['valid_until']}, expires at {bundle['expires_at']}")
 
-    return True
+    # stupid lack of native data object in json
+    show = bundle.copy()
+    for k in ( 'created_at', 'valid_until', 'expires_at' ):
+        show[k] = show[k].isoformat()
 
+    return JSONResponse( content=show, status_code=status.HTTP_201_CREATED )
 
 
 @app.get("/authorized_keys/{username}", response_class=PlainTextResponse)
