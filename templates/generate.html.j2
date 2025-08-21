@@ -18,10 +18,10 @@
 
     <p>This page provides instructions for generating a new SSH keypair for use with S3DF. Specifically, we present shell commands that you should paste into your local (eg laptop) terminal that will create a SSH private and public keypair. You will then be able to utilize this keypair to SSH into S3DF without having to always enter a username, password and 2factor (duo).</p>
     
-    <p>Our implementation also considers the use of time limited SSH keys, so the generated keypair that is only valid for a limited time period. This is currently set to a maximum of 7 days. For further security, you will also need to <a href="/list/{{ username }}">refresh'</a> your keys at least every 25 hours for the keypair to be valid.</p>
+    <p>Our implementation also considers the use of time-limited SSH keys, so the generated keypair is only valid for a limited time period. This is currently set to a maximum of 7 days. For further security, you will also need to <a href="/list/{{ username }}">refresh</a> your keys at least every 25 hours for the keypair to be valid.</p>
     <p>You may generate as may keypairs as you like and on as many computers as you like. However, you must register each public key with our service before you can use it to access S3DF.</p>
 
-    <p>To create a new private key, please use the enter commands on the computer terminal:</p>
+    <p>To create a new key, please enter the below commands on the computer terminal:</p>
 
     <pre><code>
 
@@ -40,7 +40,7 @@ mv {{ prefix_path }}/temp-key.pub {{ prefix_path }}/${fingerprint}.pub
 find {{ prefix_path }} -type f -name 'SHA256:*' ! -name '*.pub' -print0 -atime +14 # -delete
 
 # configure your local ssh configuration to include the s3df config
-grep -q "Include {{ prefix_path }}/s3df.conf" ~/.ssh/config || sed -i '1s@^@Include {{ prefix_path }}/s3df.conf\n\n@' ~/.ssh/config
+grep -q "Include {{ prefix_path }}/s3df.conf" ~/.ssh/config || echo -e "Include {{ prefix_path }}/s3df.conf\n\n$(< ~/.ssh/config)" > ~/.ssh/config
 
 # add s3df ssh dropin config to utilize the private key when ssh'ing into S3DF
 cat > {{ prefix_path }}/s3df.conf << EOF
