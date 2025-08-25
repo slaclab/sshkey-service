@@ -1,5 +1,5 @@
-ENVIRONMENT := slac-ssh-mfa
-CONTAINER_NAME := slaclab/slac-ssh-mfa
+ENVIRONMENT := sshkey-service
+CONTAINER_NAME := slaclab/sshkey-service
 CONTAINER_TAG := latest
 CONTAINER_RT := sudo podman
 DOCKERHUB_USERNAME := slaclab
