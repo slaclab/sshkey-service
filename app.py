@@ -131,8 +131,8 @@ async def list_user_keypair( request: Request, username: str, jinja_template: st
 
 
 
-@app.get("/generate/{username}")
-async def generate_user_keypair( request: Request, username: str, key_type: str = "ed25519", key_bits: int = 2048, jinja_template: str = 'generate.html.j2'):
+@app.get("/register/{username}")
+async def register_user_keypair( request: Request, username: str, key_type: str = "ed25519", key_bits: int = 2048, jinja_template: str = 'register.html.j2'):
     """
     shows instructions for how to create a keypair and upload it to us
     """
@@ -239,10 +239,11 @@ async def upload_user_public_key( request: Request, username: str, public_key: P
     } ) 
 
     # convert pendulum to iso8601 string for storage
-    await redis.hset(f"user:{username}:{bundle['finger_print']}", mapping=convert_key_bundle_to_iso(bundle))
+    item = convert_key_bundle_to_iso(bundle)
+    await redis.hset(f"user:{username}:{bundle['finger_print']}", mapping=item)
 
     logger.info(f"Registered public key for user {username}: {finger_print}, created at {bundle['created_at']}, valid until {bundle['valid_until']}, expires at {bundle['expires_at']}")
-    return JSONResponse( content=bundle, status_code=status.HTTP_201_CREATED )
+    return JSONResponse( content=item, status_code=status.HTTP_201_CREATED )
 
 
 @app.get("/authorized_keys/{username}", response_class=PlainTextResponse)
@@ -360,13 +361,13 @@ async def create( request: Request ):
     return RedirectResponse(url=f"/create/{found_username}")
 
 
-@app.get("/generate/", response_class=HTMLResponse)
+@app.get("/register/", response_class=HTMLResponse)
 async def create( request: Request ):
     """
-    Redirect to the personal generate keypair page.
+    Redirect to the personal register public key page.
     """
     found_username = auth(request)
-    return RedirectResponse(url=f"/generate/{found_username}")
+    return RedirectResponse(url=f"/register/{found_username}")
 
 
 if __name__ == "__main__":
