@@ -247,7 +247,7 @@ async def upload_user_public_key( request: Request, username: str, public_key: P
 
 
 @app.get("/authorized_keys/{username}", response_class=PlainTextResponse)
-async def get_authorized_keys( request: Request, username: str, jinja_template: str = 'authorized_keys.j2'): 
+async def get_authorized_keys( request: Request, username: str, jinja_template: str = 'authorized_keys.j2', redis: aioredis.Redis = Depends(get_redis_client)): 
     """
     Returns the valid public keys in authorized_keys format
     """
@@ -343,31 +343,15 @@ async def index( request: Request, jinja_template: str = 'index.html.j2'):
         }
     )
 
-@app.get("/list/", response_class=HTMLResponse)
-async def list( request: Request ):
+
+@app.get("/{action}/", response_class=HTMLResponse)
+async def create( request: Request, action: str ):
     """
-    Redirect to the personal keypair list page.
+    Redirect to the personal page for action.
     """
+    assert action in ('register', 'list') # prob better to do this in the params
     found_username = auth(request)
-    return RedirectResponse(url=f"/list/{found_username}")
-
-
-@app.get("/create/", response_class=HTMLResponse)
-async def create( request: Request ):
-    """
-    Redirect to the personal create keypair page.
-    """
-    found_username = auth(request)
-    return RedirectResponse(url=f"/create/{found_username}")
-
-
-@app.get("/register/", response_class=HTMLResponse)
-async def create( request: Request ):
-    """
-    Redirect to the personal register public key page.
-    """
-    found_username = auth(request)
-    return RedirectResponse(url=f"/register/{found_username}")
+    return RedirectResponse(url=f"/{action}/{found_username}")
 
 
 if __name__ == "__main__":
