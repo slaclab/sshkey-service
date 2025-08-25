@@ -4,3 +4,4 @@ paramiko
 loguru
 jinja2
 pendulum
+redis

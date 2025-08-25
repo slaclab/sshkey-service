@@ -9,9 +9,12 @@ import io
 import binascii
 from loguru import logger
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, status, Depends
 from fastapi.responses import PlainTextResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+
+from contextlib import asynccontextmanager
+import redis.asyncio as aioredis
 
 import pendulum
 import hashlib
@@ -19,17 +22,54 @@ import base64
 
 templates = Jinja2Templates(directory="templates")
 
-class PublicKey(BaseModel):
-    public_key: str
-
-app = FastAPI()
-
-# In-memory storage for the key pair (in production, use a database), nested dict of username and key fingerprint
-# This is a simple in-memory storage for demonstration purposes. please use a proper database in production.
-ALL_KEYS = {} 
+# global parameters from env
+REDIS_HOST = os.environ.get('SLACSSH_REDIS_HOST', 'dragonfly')
+REDIS_PORT = os.environ.get('SLACSSH_REDIS_PORT', 6379)
+REDIS_PASSWORD = os.environ.get('SLACSSH_REDIS_PASSWORD', None)
+REDIS_DB = int(os.environ.get('SLACSSH_REDIS_DB', 0))
 
 USERNAME_HEADER_FIELD = os.environ.get('SLACSSH_USERNAME_HEADER_FIELD', 'REMOTE-USER')
 
+
+class PublicKey(BaseModel):
+    public_key: str
+
+
+# initiate redis client
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.redis_client = aioredis.Redis(
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        password=REDIS_PASSWORD,
+        decode_responses=True # Decodes responses to strings automatically
+    )
+    try:
+        yield
+    finally:
+        await app.state.redis_client.close()
+
+app = FastAPI(lifespan=lifespan)
+
+async def get_redis_client():
+    return app.state.redis_client
+
+
+def convert_key_bundle_to_iso(item: dict):
+    """ Convert pendulum timestamps in the bundle to ISO 8601 strings.
+    """
+    bundle = item.copy()
+    for k in ( 'created_at', 'valid_until', 'expires_at' ):
+        bundle[k] = bundle[k].to_iso8601_string()
+    return bundle
+
+def convert_key_bundle_to_pendulum(item: dict):
+    """ Convert ISO 8601 strings in the bundle to pendulum timestamps.
+    """
+    bundle = item.copy()
+    for k in ( 'created_at', 'valid_until', 'expires_at' ):
+        bundle[k] = pendulum.parse(bundle[k])
+    return bundle   
 
 def auth(request: Request, user_header: str = USERNAME_HEADER_FIELD):
     """
@@ -62,7 +102,7 @@ def auth_okay(request: Request, username: str, user_header: str = USERNAME_HEADE
 
 
 @app.get("/list/{username}")
-async def list_user_keypair( request: Request, username: str, jinja_template: str = 'list.html.j2' ):
+async def list_user_keypair( request: Request, username: str, jinja_template: str = 'list.html.j2', redis: aioredis.Redis = Depends(get_redis_client) ):
     """
     List the SSH key pair for the given username.
     """
@@ -70,9 +110,14 @@ async def list_user_keypair( request: Request, username: str, jinja_template: st
     
     found_username = auth_okay(request, username)
 
+    # TODO: should probably pipeline this...
     keys = []
-    if username in ALL_KEYS:
-        keys = [ ALL_KEYS[username][finger_print] for finger_print in ALL_KEYS[username].keys() ]
+    async for k in redis.scan_iter(f"user:{username}:*"):
+        item = await redis.hgetall(k)
+        # convert timestamps back to pendulum
+        for t in ( 'created_at', 'valid_until', 'expires_at' ):
+            item[t] = pendulum.parse(item[t])
+        keys.append(item)
 
     return templates.TemplateResponse(
         name=jinja_template,  # Name of your Jinja2 template file
@@ -210,7 +255,7 @@ async def generate_user_keypair( request: Request, username: str, key_type: str 
 
 
 @app.post("/upload/{username}")
-async def upload_user_public_key( request: Request, username: str, public_key: PublicKey, source_ip_header_field: str = 'x-real-ip', valid_seconds: int = 90000, expires_seconds: int = 604800  ):
+async def upload_user_public_key( request: Request, username: str, public_key: PublicKey, source_ip_header_field: str = 'x-real-ip', valid_seconds: int = 90000, expires_seconds: int = 604800, redis: aioredis.Redis = Depends(get_redis_client)):
     """ Uploads the public key for the given username.
     """
     found_username = auth_okay(request, username)
@@ -271,9 +316,9 @@ async def upload_user_public_key( request: Request, username: str, public_key: P
     finger_print, pkey = determine_public_key(public_key)
 
     # check if the public key is already registered
-    if not username in ALL_KEYS:
-        ALL_KEYS[username] = {}
-    if finger_print in ALL_KEYS[username]:
+    existing_key = await redis.hgetall(f"user:{username}:{finger_print}")
+    logger.info(f"existing_key: {existing_key}")
+    if existing_key:
         raise HTTPException(status_code=400, detail="Public key already registered for this fingerprint. Please upload a different public key or refresh the existing one.")
                             
     # update timestamps, source_ip and user information
@@ -294,19 +339,11 @@ async def upload_user_public_key( request: Request, username: str, public_key: P
         'expires_at': now.add(seconds=expires_seconds)
     } ) 
 
-    # store
-    if not username in ALL_KEYS:
-        ALL_KEYS[username] = {}
-    ALL_KEYS[username][bundle['finger_print']] = bundle
-    
+    # convert pendulum to iso8601 string for storage
+    await redis.hset(f"user:{username}:{bundle['finger_print']}", mapping=convert_key_bundle_to_iso(bundle))
+
     logger.info(f"Registered public key for user {username}: {finger_print}, created at {bundle['created_at']}, valid until {bundle['valid_until']}, expires at {bundle['expires_at']}")
-
-    # stupid lack of native data object in json
-    show = bundle.copy()
-    for k in ( 'created_at', 'valid_until', 'expires_at' ):
-        show[k] = show[k].isoformat()
-
-    return JSONResponse( content=show, status_code=status.HTTP_201_CREATED )
+    return JSONResponse( content=bundle, status_code=status.HTTP_201_CREATED )
 
 
 @app.get("/authorized_keys/{username}", response_class=PlainTextResponse)
@@ -315,20 +352,27 @@ async def get_authorized_keys( request: Request, username: str, jinja_template: 
     Returns the valid public keys in authorized_keys format
     """
     logger.info(f"Fetching authorized keys for user: {username}")
-    if not username in ALL_KEYS:
-        raise HTTPException(status_code=404, detail=f"No SSH keys found for {username} generated yet. Call /generate-keypair first.")
     
     now = pendulum.now()
 
     keys = []
-    # filter out expired keys or not valid keys
-    for finger_print in ALL_KEYS[username].keys():
-        if ALL_KEYS[username][finger_print]['valid_until'] > now \
-            and ALL_KEYS[username][finger_print]['expires_at'] > now \
-            and ALL_KEYS[username][finger_print]['valid_until'] < ALL_KEYS[username][finger_print]['expires_at']:
-            keys.append(ALL_KEYS[username][finger_print])
+    invalid = 0
+    async for k in redis.scan_iter(f"user:{username}:*"):
 
-    logger.info(f"Found {len(keys)} valid keys for user: {username}")
+        # get item
+        item = await redis.hgetall(k)
+        item = convert_key_bundle_to_pendulum(item)
+
+        # filter out expired keys or not valid keys
+        # TODO: might be a better idea to keep a field on the hash to indicate if it's valid or not
+        if item['valid_until'] > now \
+            and item['expires_at'] > now \
+            and item['valid_until'] < item['expires_at']:
+            keys.append(item)
+        else:
+            invalid += 1
+
+    logger.info(f"Found {len(keys)} valid keys for user {username}, {invalid} expired keys.")
 
     return templates.TemplateResponse(
         name=jinja_template,  # Name of your Jinja2 template file
@@ -341,47 +385,51 @@ async def get_authorized_keys( request: Request, username: str, jinja_template: 
     )
 
 @app.delete("/destroy/{username}/{finger_print}", status_code=status.HTTP_204_NO_CONTENT)
-async def destroy_user_keypair( request: Request, username: str, finger_print: str):
+async def destroy_user_keypair( request: Request, username: str, finger_print: str, redis: aioredis.Redis = Depends(get_redis_client)):
     """
     Destroy the SSH key pair for the given username and fingerprint.
     """
-
     found_username = auth_okay(request, username)
-
     logger.info(f"Destroying SSH key pair for user: {username} with fingerprint: {finger_print}")
     
-    if not username in ALL_KEYS or finger_print not in ALL_KEYS[username]:
-        raise HTTPException(status_code=404, detail=f"No SSH keys found for {username} with fingerprint {finger_print}.")
+    # TODO: probably better to have a field in the hash to indicate it's invalid/expired to prevent key reuse
+    item = await redis.hgetall(f"user:{username}:{finger_print}")
+    if not item:
+        raise HTTPException(status_code=404, detail=f"No SSH public key found for {username} with fingerprint {finger_print}.") 
     
-    del ALL_KEYS[username][finger_print]
-    return {}
-    
+    return await redis.delete(f"user:{username}:{finger_print}")
+
+
 @app.patch("/refresh/{username}/{finger_print}")
-async def refresh_user_keypair( request: Request, username: str, finger_print: str, extend_seconds: int = 90000):
+async def refresh_user_keypair( request: Request, username: str, finger_print: str, extend_seconds: int = 90000, redis: aioredis.Redis = Depends(get_redis_client)):
     """
     Refresh the SSH key pair for the given username and fingerprint.
     """
-
     found_username = auth_okay(request, username)
-
     logger.info(f"Refreshing SSH key pair for user: {username} with fingerprint: {finger_print}")
-    
-    if not username in ALL_KEYS or finger_print not in ALL_KEYS[username]:
-        raise HTTPException(status_code=404, detail=f"No SSH keys found for {username} with fingerprint {finger_print}.")
     
     # allow an extra number of hours
     extension = pendulum.now().add(seconds=extend_seconds)
+
+    item = await redis.hgetall(f"user:{username}:{finger_print}")
+    if not item:
+        raise HTTPException(status_code=404, detail=f"No SSH public key found for {username} with fingerprint {finger_print}.")
+    item = convert_key_bundle_to_pendulum(item)
+
     # okay to extend validity
-    if extension < ALL_KEYS[username][finger_print]['expires_at']:
-       ALL_KEYS[username][finger_print]['valid_until'] = extension
+    if extension < item['expires_at']:
+       item['valid_until'] = extension
     # extend upto the expiry
-    elif extension > ALL_KEYS[username][finger_print]['expires_at']:
+    elif extension > item['expires_at']:
         # extend the expiry date
-        ALL_KEYS[username][finger_print]['valid_until'] = ALL_KEYS[username][finger_print]['expires_at'] 
+        item['valid_until'] = item['expires_at'] 
     # nope
     else:
         raise HTTPException(status_code=400, detail="Cannot extend beyond the expiry date.")
     
+    # update storage
+    await redis.hset(f"user:{username}:{item['finger_print']}", mapping=convert_key_bundle_to_iso(item))
+
     return True
 
     
