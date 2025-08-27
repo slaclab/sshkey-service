@@ -1,5 +1,5 @@
 kind: Kustomization
-namespace: slac-ssh-mfa
+namespace: dev
 
 resources:
   - deployment.yaml

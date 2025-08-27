@@ -1,6 +1,6 @@
 ENVIRONMENT := sshkey-service
 CONTAINER_NAME := slaclab/sshkey-service
-CONTAINER_TAG := latest
+CONTAINER_TAG := dev
 CONTAINER_RT := sudo podman
 DOCKERHUB_USERNAME := slaclab
 CONTAINER_PREFIX := docker.io
@@ -15,7 +15,7 @@ clean-dev:
 	rm -rf $(ENVIRONMENT) 
 
 start-app:
-	$(ENVIRONMENT)/bin/python3 app.py 	
+	$(ENVIRONMENT)/bin/python3 ./src/app.py 	
 
 dockerhub-login:
 	$(CONTAINER_RT) login --username $(DOCKERHUB_USERNAME) $(CONTAINER_PREFIX)/$(CONTAINER_NAME)

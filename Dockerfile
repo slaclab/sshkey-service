@@ -7,4 +7,4 @@ RUN pip install --no-cache-dir --upgrade -r /app/requirements.txt
 
 COPY ./ /app
 
-#CMD ["fastapi", "run", "/app/app.py", "--port", "8000"]
+#CMD ["fastapi", "run", "/app/src/app.py", "--port", "8000"]

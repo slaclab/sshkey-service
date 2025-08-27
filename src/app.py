@@ -1,24 +1,22 @@
-from fastapi import FastAPI, HTTPException
-
-import paramiko
-from pydantic import BaseModel
-from typing import Optional
-
 import os
 import io
 import binascii
-from loguru import logger
-
-from fastapi import FastAPI, Request, status, Depends
-from fastapi.responses import PlainTextResponse, HTMLResponse, JSONResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
-
-from contextlib import asynccontextmanager
-import redis.asyncio as aioredis
-
-import pendulum
 import hashlib
 import base64
+from typing import Optional
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException, Request, status, Depends
+from fastapi.responses import PlainTextResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
+import paramiko
+import pendulum
+import redis.asyncio as aioredis
+from loguru import logger
+
+from auth_utils import auth_okay
+from keybundle import KeyBundle
 
 templates = Jinja2Templates(directory="templates")
 
@@ -54,23 +52,6 @@ app = FastAPI(lifespan=lifespan)
 async def get_redis_client():
     return app.state.redis_client
 
-
-def convert_key_bundle_to_iso(item: dict):
-    """ Convert pendulum timestamps in the bundle to ISO 8601 strings.
-    """
-    bundle = item.copy()
-    for k in ( 'created_at', 'valid_until', 'expires_at' ):
-        bundle[k] = bundle[k].to_iso8601_string()
-    return bundle
-
-def convert_key_bundle_to_pendulum(item: dict):
-    """ Convert ISO 8601 strings in the bundle to pendulum timestamps.
-    """
-    bundle = item.copy()
-    for k in ( 'created_at', 'valid_until', 'expires_at' ):
-        bundle[k] = pendulum.parse(bundle[k])
-    return bundle   
-
 def auth(request: Request, user_header: str = USERNAME_HEADER_FIELD):
     """
     Check if the request is authenticated.
@@ -84,39 +65,19 @@ def auth(request: Request, user_header: str = USERNAME_HEADER_FIELD):
     # if we reach here, the user is authorized
     return found_username
 
-# shudl probably refactor this as a decorator...
-def auth_okay(request: Request, username: str, user_header: str = USERNAME_HEADER_FIELD):
-    """
-    Check if the logged in user is expected to be allowed to access this resource
-    """
-    #logger.debug(f'all headers: {request.headers}')
-    # only allow user defined in the request, or if user is admin
-    admins = os.getenv('SLACSSH_ADMINS', '').split(',')
-    found_username = auth(request, user_header)
-    if found_username != username and found_username not in admins:
-        logger.error(f"Unauthorized access attempt by user: {found_username}. Expected user: {username}.")
-        raise HTTPException(status_code=403, detail=f"Forbidden: User {found_username} is not allowed to access this resource.")
-    logger.info(f"User {found_username} is authorized to access the resource.")
-    # if we reach here, the user is good
-    return found_username
-
-
 @app.get("/list/{username}")
-async def list_user_keypair( request: Request, username: str, jinja_template: str = 'list.html.j2', redis: aioredis.Redis = Depends(get_redis_client) ):
+async def list_user_keypair( request: Request, username: str, found_username: str = Depends(auth_okay), jinja_template: str = 'list.html.j2', redis: aioredis.Redis = Depends(get_redis_client) ):
     """
     List the SSH key pair for the given username.
     """
     logger.info(f"Listing SSH key pair for user: {username}")
     
-    found_username = auth_okay(request, username)
-
     # TODO: should probably pipeline this...
     keys = []
     async for k in redis.scan_iter(f"user:{username}:*"):
         item = await redis.hgetall(k)
         # convert timestamps back to pendulum
-        for t in ( 'created_at', 'valid_until', 'expires_at' ):
-            item[t] = pendulum.parse(item[t])
+        item = KeyBundle.to_pendulum(item)
         keys.append(item)
 
     return templates.TemplateResponse(
@@ -132,12 +93,10 @@ async def list_user_keypair( request: Request, username: str, jinja_template: st
 
 
 @app.get("/register/{username}")
-async def register_user_keypair( request: Request, username: str, key_type: str = "ed25519", key_bits: int = 2048, jinja_template: str = 'register.html.j2'):
+async def register_user_keypair( request: Request, username: str, found_username: str = Depends(auth_okay), key_type: str = "ed25519", key_bits: int = 2048, jinja_template: str = 'register.html.j2'):
     """
     shows instructions for how to create a keypair and upload it to us
     """
-    found_username = auth_okay(request, username)
-
     logger.info(f"Generating SSH key pair for user: {username} with type: {key_type} and bits: {key_bits}")
 
     return templates.TemplateResponse(
@@ -154,72 +113,37 @@ async def register_user_keypair( request: Request, username: str, key_type: str 
 
 
 @app.post("/upload/{username}")
-async def upload_user_public_key( request: Request, username: str, public_key: PublicKey, source_ip_header_field: str = 'x-real-ip', valid_seconds: int = 90000, expires_seconds: int = 604800, redis: aioredis.Redis = Depends(get_redis_client)):
+async def upload_user_public_key(
+    request: Request,
+    username: str,
+    found_username: str = Depends(auth_okay)
+    public_key: PublicKey,
+    source_ip_header_field: str = 'x-real-ip',
+    valid_seconds: int = 90000,
+    expires_seconds: int = 604800,
+    redis: aioredis.Redis = Depends(get_redis_client)
+):
+
     """ Uploads the public key for the given username.
     """
-    found_username = auth_okay(request, username)
-
     logger.info(f"Uploading public key for user: {username}: {public_key.public_key}")
 
-    # shoudl check if the public key is already registered
-    def determine_public_key(key: str) -> str:
-        """
-        Strips the public key of any comments or other unnecessary parts.
-        Returns the cleaned public key and its fingerprint.
-        """
-        found = None
-
-        # ---- BEGIN SSH2 PUBLIC KEY ----
-        # Comment: "256-bit ED25519, converted by ytl@yees-m3-mac.lan from OpenS"
-        # AAAAC3NzaC1lZDI1NTE5AAAAIGs4y2orDiyCSpY/12Psser9E+q9GzF7133Wu4wBtCqE
-        #---- END SSH2 PUBLIC KEY ----
-        in_key_block = False
-        key_data_base64 = ""
-        key_type = None
-        for line in public_key.public_key.splitlines():
-            if line.strip() == "---- BEGIN SSH2 PUBLIC KEY ----":
-                in_key_block = True
-                continue
-            elif line.strip() == "---- END SSH2 PUBLIC KEY ----":
-                break
-
-            if in_key_block:
-                if line.strip().startswith("Comment:"):
-                    # Extract key type from comment
-                    comment = line.strip().split(':', 1)[1].strip()
-                    if "ED25519" in comment:
-                        key_type = "ssh-ed25519"
-                    elif "RSA" in comment:
-                        key_type = "ssh-rsa"
-                    # Add other key types as needed
-                    continue
-                else:
-                    key_data_base64 += line.strip()
-
-        # error out if not valid
-        if not key_data_base64 or not key_type:
-            raise HTTPException(status_code=400, detail="Invalid public key format. Please ensure it is in the correct format.")
-
-        found = None
-        try:
-            found = paramiko.PKey.from_type_string(key_type, base64.b64decode(key_data_base64))
-        except Exception as e:
-            raise HTTPException(status_code=400, detail="Could not parse the public key. Please ensure it is in the correct format.")
-        
-        # remove trailing '=' and replace '/' with '.' since we can't have filenames with '/' in them
-        finger_print = found.fingerprint.rstrip('=').replace('/','.').replace('+','.')
-        
-        logger.info(f"Found public key {finger_print}: {found}")
-        return finger_print, found
-
-    finger_print, pkey = determine_public_key(public_key)
+    finger_print, pkey = KeyBundle.determine_public_key(public_key)
 
     # check if the public key is already registered
     existing_key = await redis.hgetall(f"user:{username}:{finger_print}")
     logger.info(f"existing_key: {existing_key}")
     if existing_key:
         raise HTTPException(status_code=400, detail="Public key already registered for this fingerprint. Please upload a different public key or refresh the existing one.")
-                            
+    
+
+    bundle = KeyBundle.build(
+        username=username,
+        public_key_str=public_key.public_key,
+        source_ip=request.headers.get(source_ip_header_field, request.client.host),
+        valid_seconds=valid_seconds,
+        expires_seconds=expires_seconds
+    )
     # update timestamps, source_ip and user information
     bundle = {
         'username': username,
@@ -237,6 +161,11 @@ async def upload_user_public_key( request: Request, username: str, public_key: P
         'valid_until': now.add(seconds=valid_seconds),
         'expires_at': now.add(seconds=expires_seconds)
     } ) 
+
+    
+    
+
+}
 
     # convert pendulum to iso8601 string for storage
     item = convert_key_bundle_to_iso(bundle)
@@ -285,11 +214,10 @@ async def get_authorized_keys( request: Request, username: str, jinja_template: 
     )
 
 @app.delete("/destroy/{username}/{finger_print}", status_code=status.HTTP_204_NO_CONTENT)
-async def destroy_user_keypair( request: Request, username: str, finger_print: str, redis: aioredis.Redis = Depends(get_redis_client)):
+async def destroy_user_keypair( request: Request, username: str, found_username: str = Depends(auth_okay), finger_print: str, redis: aioredis.Redis = Depends(get_redis_client)):
     """
     Destroy the SSH key pair for the given username and fingerprint.
     """
-    found_username = auth_okay(request, username)
     logger.info(f"Destroying SSH key pair for user: {username} with fingerprint: {finger_print}")
     
     # TODO: probably better to have a field in the hash to indicate it's invalid/expired to prevent key reuse
@@ -301,11 +229,10 @@ async def destroy_user_keypair( request: Request, username: str, finger_print: s
 
 
 @app.patch("/refresh/{username}/{finger_print}")
-async def refresh_user_keypair( request: Request, username: str, finger_print: str, extend_seconds: int = 90000, redis: aioredis.Redis = Depends(get_redis_client)):
+async def refresh_user_keypair( request: Request, username: str, found_username: str = Depends(auth_okay), finger_print: str, extend_seconds: int = 90000, redis: aioredis.Redis = Depends(get_redis_client)):
     """
     Refresh the SSH key pair for the given username and fingerprint.
     """
-    found_username = auth_okay(request, username)
     logger.info(f"Refreshing SSH key pair for user: {username} with fingerprint: {finger_print}")
     
     # allow an extra number of hours
