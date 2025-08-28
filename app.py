@@ -80,7 +80,7 @@ def auth(request: Request, user_header: str = USERNAME_HEADER_FIELD):
     """
     # only allow user defined in the request, or if user is admin
     found_username = request.headers.get( user_header )
-    logger.info(f"Found user {found_username} (looking at header {user_header})")
+    logger.debug(f"Found user {found_username} (looking at header {user_header})")
     if not found_username:
         logger.error("No username found in request headers.")
         raise HTTPException(status_code=401, detail="Unauthorized: No username found in request headers. Please check application configuration for env SLACSSH_USERNAME_HEADER_FIELD.")
@@ -88,7 +88,8 @@ def auth(request: Request, user_header: str = USERNAME_HEADER_FIELD):
     return found_username
 
 # shudl probably refactor this as a decorator...
-def auth_okay(request: Request, username: str, user_header: str = USERNAME_HEADER_FIELD):
+# should probably be more defensive about this and default to returning false; only return true if everything checks out
+def auth_okay(request: Request, username: str, admin_only: bool = False, user_header: str = USERNAME_HEADER_FIELD):
     """
     Check if the logged in user is expected to be allowed to access this resource
     """
@@ -96,9 +97,16 @@ def auth_okay(request: Request, username: str, user_header: str = USERNAME_HEADE
     # only allow user defined in the request, or if user is admin
     admins = os.getenv('SLACSSH_ADMINS', '').split(',')
     found_username = auth(request, user_header)
-    if found_username != username and found_username not in admins:
-        logger.error(f"Unauthorized access attempt by user: {found_username}. Expected user: {username}.")
-        raise HTTPException(status_code=403, detail=f"Forbidden: User {found_username} is not allowed to access this resource.")
+
+    if not admin_only:
+        if found_username != username and found_username not in admins:
+            logger.error(f"Unauthorized access attempt by user: {found_username}. Expected user: {username}.")
+            raise HTTPException(status_code=403, detail=f"Forbidden: User {found_username} is not allowed to access this resource.")
+    else:
+        if found_username not in admins:
+            logger.error(f"Unauthorized admin access attempt by user: {found_username}.")
+            raise HTTPException(status_code=403, detail=f"Forbidden: User {found_username} is not an admin.")
+    
     logger.info(f"User {found_username} is authorized to access the resource.")
     # if we reach here, the user is good
     return found_username
@@ -299,7 +307,7 @@ async def destroy_user_keypair( request: Request, username: str, finger_print: s
     """
     Destroy the SSH key pair for the given username and fingerprint.
     """
-    found_username = auth_okay(request, username)
+    found_username = auth_okay(request, username, admin_only=True)
     logger.info(f"Destroying SSH key pair for user: {username} with fingerprint: {finger_print}")
     
     # TODO: probably better to have a field in the hash to indicate it's invalid/expired to prevent key reuse
