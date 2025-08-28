@@ -11,6 +11,7 @@
     <table id="mykeys">
     <tr>
         <th>finger print</th>
+        <th>is_active</th>
         <th>created_at</th>
         <th>source_ip</th>
         <th>valid_until</th>
@@ -21,7 +22,10 @@
     <tr data-fingerprint="{{ key['finger_print'] }}">
 
     <td>
-{{ key['finger_print'] }} 
+{{ key['finger_print'] }}
+    </td>
+    <td>
+{% if key['is_active'] == "1" %}✅{% else %}❌{% endif %}
     </td>
     <td>
 {{ key['created_at'] }} 
@@ -38,7 +42,7 @@
 
     <td>
     <button class="refresh">Refresh</button>
-    <button class="destroy">Destroy</button>
+    <button class="inactivate">Inactivate</button>
     </td>
 
 
@@ -73,9 +77,9 @@
         const fingerprint = ev.currentTarget.closest("tr").getAttribute("data-fingerprint");
         fpoperation(`../refresh/${username}/${fingerprint}`, "PATCH");
     }))
-    document.querySelectorAll(".destroy").forEach((el) => el.addEventListener("click", (ev) => {
+    document.querySelectorAll(".inactivate").forEach((el) => el.addEventListener("click", (ev) => {
         const fingerprint = ev.currentTarget.closest("tr").getAttribute("data-fingerprint");
-        fpoperation(`../destroy/${username}/${fingerprint}`, "DELETE");
+        fpoperation(`../inactivate/${username}/${fingerprint}`, "DELETE");
     }))
 </script>    
 </html>

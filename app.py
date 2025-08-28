@@ -34,6 +34,8 @@ USERNAME_HEADER_FIELD = os.environ.get('SLACSSH_USERNAME_HEADER_FIELD', 'REMOTE-
 class PublicKey(BaseModel):
     public_key: str
 
+# use this to determine the redis hash field to indicate if the key is active or not; use hexpire where necessary
+IS_ACTIVE_FIELD = 'is_active'
 
 # initiate redis client
 @asynccontextmanager
@@ -60,7 +62,8 @@ def convert_key_bundle_to_iso(item: dict):
     """
     bundle = item.copy()
     for k in ( 'created_at', 'valid_until', 'expires_at' ):
-        bundle[k] = bundle[k].to_iso8601_string()
+        if isinstance(bundle[k], pendulum.DateTime):
+            bundle[k] = bundle[k].to_iso8601_string()
     return bundle
 
 def convert_key_bundle_to_pendulum(item: dict):
@@ -230,9 +233,10 @@ async def upload_user_public_key( request: Request, username: str, public_key: P
     }
 
     # determine time ranges
-    now = pendulum.now()        
+    now = pendulum.now() 
     bundle.update( {
         'source_ip': request.headers.get(source_ip_header_field, request.client.host),
+        IS_ACTIVE_FIELD: 1, # use this field to indicate if the key is valid or not, absence of field means invalid; see redis hexpire below. redis does not support bools
         'created_at': now,
         'valid_until': now.add(seconds=valid_seconds),
         'expires_at': now.add(seconds=expires_seconds)
@@ -240,7 +244,12 @@ async def upload_user_public_key( request: Request, username: str, public_key: P
 
     # convert pendulum to iso8601 string for storage
     item = convert_key_bundle_to_iso(bundle)
-    await redis.hset(f"user:{username}:{bundle['finger_print']}", mapping=item)
+    this_key = f"user:{username}:{bundle['finger_print']}"
+    await redis.hset( this_key, mapping=item)
+
+    # use hexpire to automatically determine that the public key is no longer valid after valid_until
+    # dragonfly doesn't support hexpiraeat; so use delta offset instead
+    await redis.hexpire( this_key, valid_seconds, IS_ACTIVE_FIELD )
 
     logger.info(f"Registered public key for user {username}: {finger_print}, created at {bundle['created_at']}, valid until {bundle['valid_until']}, expires at {bundle['expires_at']}")
     return JSONResponse( content=item, status_code=status.HTTP_201_CREATED )
@@ -265,7 +274,8 @@ async def get_authorized_keys( request: Request, username: str, jinja_template: 
 
         # filter out expired keys or not valid keys
         # TODO: might be a better idea to keep a field on the hash to indicate if it's valid or not
-        if item['valid_until'] > now \
+        if IS_ACTIVE_FIELD in item \
+            and item['valid_until'] > now \
             and item['expires_at'] > now \
             and item['valid_until'] < item['expires_at']:
             keys.append(item)
@@ -299,6 +309,28 @@ async def destroy_user_keypair( request: Request, username: str, finger_print: s
     
     return await redis.delete(f"user:{username}:{finger_print}")
 
+@app.delete("/inactivate/{username}/{finger_print}", status_code=status.HTTP_204_NO_CONTENT)
+async def inactivate_user_keypair( request: Request, username: str, finger_print: str, redis: aioredis.Redis = Depends(get_redis_client)):
+    """
+    Invalidate the SSH key pair for the given username and fingerprint.
+    """
+    found_username = auth_okay(request, username)
+    logger.info(f"Invalidate SSH key pair for user: {username} with fingerprint: {finger_print}")
+    
+    key = f"user:{username}:{finger_print}"
+    # TODO: probably better to have a field in the hash to indicate it's invalid/expired to prevent key reuse
+    item = await redis.hgetall(key)
+    if not item:
+        raise HTTPException(status_code=404, detail=f"No SSH public key found for {username} with fingerprint {finger_print}.")
+
+    # stupid dragonfly won't overwrite the hexpire. so lets delete the hash altogether and rewrite it
+    await redis.delete(key) 
+    del item[IS_ACTIVE_FIELD] # remove the is_active field so that it's no longer valid
+    item['valid_until'] = pendulum.now()
+    logger.info(f"Setting {item}")
+    await redis.hset( key, mapping=convert_key_bundle_to_iso(item))
+
+    return True
 
 @app.patch("/refresh/{username}/{finger_print}")
 async def refresh_user_keypair( request: Request, username: str, finger_print: str, extend_seconds: int = 90000, redis: aioredis.Redis = Depends(get_redis_client)):
@@ -311,7 +343,9 @@ async def refresh_user_keypair( request: Request, username: str, finger_print: s
     # allow an extra number of hours
     extension = pendulum.now().add(seconds=extend_seconds)
 
-    item = await redis.hgetall(f"user:{username}:{finger_print}")
+    key = f"user:{username}:{finger_print}"
+
+    item = await redis.hgetall(key)
     if not item:
         raise HTTPException(status_code=404, detail=f"No SSH public key found for {username} with fingerprint {finger_print}.")
     item = convert_key_bundle_to_pendulum(item)
@@ -328,7 +362,10 @@ async def refresh_user_keypair( request: Request, username: str, finger_print: s
         raise HTTPException(status_code=400, detail="Cannot extend beyond the expiry date.")
     
     # update storage
-    await redis.hset(f"user:{username}:{item['finger_print']}", mapping=convert_key_bundle_to_iso(item))
+    item[IS_ACTIVE_FIELD] = 1 # make sure it's active
+    await redis.hset( key, mapping=convert_key_bundle_to_iso(item))
+    # update is_valid ttl
+    await redis.hexpire( key, extend_seconds, IS_ACTIVE_FIELD )
 
     return True
 
