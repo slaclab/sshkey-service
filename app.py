@@ -125,9 +125,8 @@ async def list_user_keypair( request: Request, username: str, jinja_template: st
     keys = []
     async for k in redis.scan_iter(f"user:{username}:*"):
         item = await redis.hgetall(k)
-        # convert timestamps back to pendulum
-        for t in ( 'created_at', 'valid_until', 'expires_at' ):
-            item[t] = pendulum.parse(item[t])
+        item = convert_key_bundle_to_pendulum( item )
+        logger.info(f"Found key: {item}")
         keys.append(item)
 
     return templates.TemplateResponse(
