@@ -1,8 +1,0 @@
-kind: Kustomization
-namespace: dev
-
-resources:
-  - deployment.yaml
-  - endpoints.yaml
-
-  
