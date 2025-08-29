@@ -1,13 +1,13 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name:  slac-ssh-mfa
+  name:  sshkey-service
   labels:
-    app: slac-ssh-mfa
+    app: sshkey-service
 spec:
   selector:
     matchLabels:
-      app: slac-ssh-mfa
+      app: sshkey-service
   strategy:
     rollingUpdate:
       maxSurge: 1
@@ -16,12 +16,12 @@ spec:
   template:
     metadata:
       labels:
-        app: slac-ssh-mfa
+        app: sshkey-service
     spec:
       containers:
-      - image:  slaclab/slac-ssh-mfa:latest
+      - image:  slaclab/slackey-service:dev
         imagePullPolicy: Always
-        name:  slac-ssh-mfa
+        name:  sshkey-service
         command: 
         - python3 
         - /app/app.py 
@@ -47,7 +47,7 @@ spec:
           value: x-vouch-idp-claims-name
         # comma separated list of usernames whom shall be considered admins
         - name:  SLACSSH_ADMINS
-          value:  ytl
+          value:  "ytl, pav"
         ports:
         - containerPort:  8000
           name:  www

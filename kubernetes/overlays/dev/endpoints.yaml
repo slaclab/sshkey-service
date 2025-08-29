@@ -1,10 +1,10 @@
 kind: Service
 apiVersion: v1
 metadata:
-  name:  slac-ssh-mfa
+  name:  sshkey-service
 spec:
   selector:
-    app:  slac-ssh-mfa
+    app:  sshkey-service
   type: ClusterIP
   ports:
   - name:  wwww
@@ -14,27 +14,27 @@ spec:
 kind: Ingress
 apiVersion: networking.k8s.io/v1
 metadata:
-  name:  slac-ssh-mfa-frontpage # no auth required
+  name:  sshkey-service-frontpage # no auth required
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: /
     # nginx.ingress.kubernetes.io/whitelist-source-range: 192.168.0.0/16,10.0.0.0/8,172.24.4.0/24,134.79.0.0/16
 spec:
   rules:
-  - host:  slac-ssh-mfa.slac.stanford.edu
+  - host: s3df-sshkeys-dev.slac.stanford.edu
     http:
       paths:
         - path: /
           pathType: Prefix
           backend:
             service:
-              name: slac-ssh-mfa
+              name: sshkey-service
               port:
                 number: 8000
 ---
 kind: Ingress
 apiVersion: networking.k8s.io/v1
 metadata:
-  name:  slac-ssh-mfa-ingress
+  name:  sshkey-service-modify
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: /$1/$2
     # nginx.ingress.kubernetes.io/whitelist-source-range: 192.168.0.0/16,10.0.0.0/8,172.24.4.0/24,134.79.0.0/16
@@ -54,41 +54,41 @@ metadata:
       proxy_set_header Remote-User $http_x_vouch_idp_claims_name;
 spec:
   rules:
-  - host:  slac-ssh-mfa.slac.stanford.edu
+  - host:  s3df-sskeys-dev.slac.stanford.edu
     http:
       paths:
         - path: /(register|list|upload)/(\w+)?
           pathType: Prefix
           backend:
             service:
-              name: slac-ssh-mfa
+              name: sshkey-service
               port:
                 number: 8000
 ---
 kind: Ingress
 apiVersion: networking.k8s.io/v1
 metadata:
-  name:  slac-ssh-mfa-auth
+  name:  ssh-service-authorized-keys
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: /authorized_keys/$1
     # nginx.ingress.kubernetes.io/whitelist-source-range: 192.168.0.0/16,10.0.0.0/8,172.24.4.0/24,134.79.0.0/16
 spec:
   rules:
-  - host:  slac-ssh-mfa.slac.stanford.edu
+  - host:  s3df-sshkeys-dev.slac.stanford.edu
     http:
       paths:
         - path: /authorized_keys/(\w+)
           pathType: Prefix
           backend:
             service:
-              name: slac-ssh-mfa
+              name: sshkey-service
               port:
                 number: 8000
 ---
 kind: Ingress
 apiVersion: networking.k8s.io/v1
 metadata:
-  name:  slac-ssh-mfa-docs
+  name:  sshkey-service-docs
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: /$1
     # nginx.ingress.kubernetes.io/whitelist-source-range: 192.168.0.0/16,10.0.0.0/8,172.24.4.0/24,134.79.0.0/16
@@ -108,14 +108,14 @@ metadata:
       proxy_set_header Remote-User $http_x_vouch_idp_claims_name;
 spec:
   rules:
-  - host:  slac-ssh-mfa.slac.stanford.edu
+  - host:  s3df-sshkeys-dev.slac.stanford.edu
     http:
       paths:
         - path: /(docs|static|openapi.json)
           pathType: Prefix
           backend:
             service:
-              name: slac-ssh-mfa
+              name: sshkey-service
               port:
                 number: 8000
 ---
@@ -123,7 +123,7 @@ spec:
 kind: Ingress
 apiVersion: networking.k8s.io/v1
 metadata:
-  name:  slac-ssh-mfa-ingress-modify
+  name:  sshkey-service-modify-public-key
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: /$1/$2/$3
     # nginx.ingress.kubernetes.io/whitelist-source-range: 192.168.0.0/16,10.0.0.0/8,172.24.4.0/24,134.79.0.0/16
@@ -143,13 +143,13 @@ metadata:
       proxy_set_header Remote-User $http_x_vouch_idp_claims_name;
 spec:
   rules:
-  - host:  slac-ssh-mfa.slac.stanford.edu
+  - host:  s3df-sshkeys-dev.slac.stanford.edu
     http:
       paths:
         - path: /(destroy|inactivate|refresh)/(\w+)/(SHA256:[\w.]+)
           pathType: Prefix
           backend:
             service:
-              name: slac-ssh-mfa
+              name: sshkey-service
               port:
                 number: 8000
