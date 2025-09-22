@@ -366,7 +366,7 @@ async def refresh_user_keypair( request: Request, username: str, finger_print: s
     if extension < item['expires_at']:
        item['valid_until'] = extension
     # extend upto the expiry
-    elif extension >= item['expires_at'] and extension:
+    elif extension >= item['expires_at']:
         # extend the expiry date
         item['valid_until'] = item['expires_at'] 
     
