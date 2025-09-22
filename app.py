@@ -348,7 +348,8 @@ async def refresh_user_keypair( request: Request, username: str, finger_print: s
     logger.info(f"Refreshing SSH key pair for user: {username} with fingerprint: {finger_print}")
     
     # allow an extra number of hours
-    extension = pendulum.now().add(seconds=extend_seconds)
+    now = pendulum.now()
+    extension = now.add(seconds=extend_seconds)
 
     key = f"user:{username}:{finger_print}"
 
@@ -357,16 +358,17 @@ async def refresh_user_keypair( request: Request, username: str, finger_print: s
         raise HTTPException(status_code=404, detail=f"No SSH public key found for {username} with fingerprint {finger_print}.")
     item = convert_key_bundle_to_pendulum(item)
 
+    # do not extend past expire time
+    if now >= item['expires_at']:
+        raise HTTPException(status_code=400, detail="Cannot extend beyond the expiry date.")
+    
     # okay to extend validity
     if extension < item['expires_at']:
        item['valid_until'] = extension
     # extend upto the expiry
-    elif extension > item['expires_at']:
+    elif extension >= item['expires_at'] and extension:
         # extend the expiry date
         item['valid_until'] = item['expires_at'] 
-    # nope
-    else:
-        raise HTTPException(status_code=400, detail="Cannot extend beyond the expiry date.")
     
     # update storage
     item[IS_ACTIVE_FIELD] = 1 # make sure it's active
