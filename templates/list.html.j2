@@ -8,6 +8,10 @@
     
     <p>Register new public key: <button onclick="window.location.href='/register/{{ username }}'" class="register">Register</button></p>
 
+    {% if no_expiry %}
+    <p>SSH key expiry disabled</p>
+    {% endif %}
+
     <table id="mykeys">
     <tr>
         <th>finger print</th>
