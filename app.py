@@ -367,38 +367,25 @@ async def refresh_user_keypair( request: Request, username: str, finger_print: s
         if now >= item['expires_at']:
             raise HTTPException(status_code=400, detail="Cannot extend beyond the expiry date.")
 
-    logger.debug ('value v')
-    logger.debug(type(item['expires_at']))
-    logger.debug(item['expires_at'])
-    logger.debug('value ^')
-    
-    # handle expiry toggling:
+    # handle EXPIRES DISABLED by:
     # If a key with an expiration date is refreshed while NO EXPIRE is active, convert it
-    # to a non-expiry key
-    logger.info(f'NO_EXPIRY: { "true" if NO_EXPIRY else "false" }')
+    # to a non-expiry key, then grant extension
     if NO_EXPIRY:
-        item['expires_at'] = EPOCH_NEVER_EXPIRE
+        item['expires_at'] = EPOCH_NEVER_EXPIRE # set expire
         item['valid_until'] = extension
+    # handle EXPIRES ENABLED by:
     # If a non-expiry key is refreshed while EXPIRE is active, convert it
-    # to an expiry key by assigning it an expiration date
-    elif not NO_EXPIRY and item['expires_at'] == EPOCH_NEVER_EXPIRE:
-        # first set a proper expiry
-        item['expires_at'] = now.add(seconds=expires_seconds) # set back to default length
-        # handle extension
-        if extension < item['expires_at']:
-            item['valid_until'] = extension
-        elif extension >= item['expires_at']: # extend upto the expiry
-            item['valid_until'] = item['expires_at'] 
-    # If an expiry key is refreshed while EXPIRE is active, handle normally.
-    elif not NO_EXPIRY and not item['expires_at'] == EPOCH_NEVER_EXPIRE:
-        # handle extension
-        if extension < item['expires_at']:
-            item['valid_until'] = extension
-        elif extension >= item['expires_at']: # extend upto the expiry
-            item['valid_until'] = item['expires_at'] 
+    # to an expiry key by assigning it an expiration date, then extend normally
     else:
-        raise HTTPException(status_code=400, detail="Unsupported refresh case")
-    
+        # set a proper expire date
+        if item['expires_at'] == EPOCH_NEVER_EXPIRE:
+            item['expires_at'] = now.add(seconds=expires_seconds)
+        # proceed as normal, increase to extension or only up to expiry
+        if extension <= item['expires_at']:
+            item['valid_until'] = extension
+        else:
+            item['valid_until'] = item['expires_at']
+        
     # update storage
     await redis.delete(key) 
     item[IS_ACTIVE_FIELD] = 1 # make sure it's active
