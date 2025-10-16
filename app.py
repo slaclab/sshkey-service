@@ -31,6 +31,8 @@ REDIS_DB = int(os.environ.get('SLACSSH_REDIS_DB', 0))
 USERNAME_HEADER_FIELD = os.environ.get('SLACSSH_USERNAME_HEADER_FIELD', 'REMOTE-USER')
 
 NO_EXPIRY = True
+EPOCH_NEVER_EXPIRE = pendulum.datetime(1970,1,1) # no expiration for keys set to unix epoch
+
 
 class PublicKey(BaseModel):
     public_key: str
@@ -250,7 +252,7 @@ async def upload_user_public_key( request: Request, username: str, public_key: P
         IS_ACTIVE_FIELD: 1, # use this field to indicate if the key is valid or not, absence of field means invalid; see redis hexpire below. redis does not support bools
         'created_at': now,
         'valid_until': now.add(seconds=valid_seconds),
-        'expires_at': pendulum.datetime(1970, 1, 1) if NO_EXPIRY else now.add(seconds=expires_seconds) # set non-expiry tokens to epoch
+        'expires_at': EPOCH_NEVER_EXPIRE if NO_EXPIRY else now.add(seconds=expires_seconds) # set non-expiry tokens to epoch
     } ) 
 
     # convert pendulum to iso8601 string for storage
@@ -373,9 +375,9 @@ async def refresh_user_keypair( request: Request, username: str, finger_print: s
     # handle expiry toggling
     logger.info(f'NO_EXPIRY: { "true" if NO_EXPIRY else "false" }')
     if NO_EXPIRY:
-        item['expires_at'] = pendulum.datetime(1970,1,1)
+        item['expires_at'] = EPOCH_NEVER_EXPIRE
         item['valid_until'] = extension
-    elif not NO_EXPIRY and item['expires_at'] == pendulum.datetime(1970,1,1):
+    elif not NO_EXPIRY and item['expires_at'] == EPOCH_NEVER_EXPIRE:
         # first set a proper expiry
         item['expires_at'] = now.add(seconds=604800) # set back to default length
         # handle extension
@@ -383,7 +385,7 @@ async def refresh_user_keypair( request: Request, username: str, finger_print: s
             item['valid_until'] = extension
         elif extension >= item['expires_at']: # extend upto the expiry
             item['valid_until'] = item['expires_at'] 
-    elif not NO_EXPIRY and not item['expires_at'] == pendulum.datetime(1970,1,1):
+    elif not NO_EXPIRY and not item['expires_at'] == EPOCH_NEVER_EXPIRE:
         # handle extension
         if extension < item['expires_at']:
             item['valid_until'] = extension
