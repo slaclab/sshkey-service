@@ -344,7 +344,7 @@ async def inactivate_user_keypair( request: Request, username: str, finger_print
     return True
 
 @app.patch("/refresh/{username}/{finger_print}")
-async def refresh_user_keypair( request: Request, username: str, finger_print: str, extend_seconds: int = 90000, redis: aioredis.Redis = Depends(get_redis_client)):
+async def refresh_user_keypair( request: Request, username: str, finger_print: str, extend_seconds: int = 90000, expires_seconds: int = 604800, redis: aioredis.Redis = Depends(get_redis_client)):
     """
     Refresh the SSH key pair for the given username and fingerprint.
     """
@@ -372,25 +372,32 @@ async def refresh_user_keypair( request: Request, username: str, finger_print: s
     logger.debug(item['expires_at'])
     logger.debug('value ^')
     
-    # handle expiry toggling
+    # handle expiry toggling:
+    # If a key with an expiration date is refreshed while NO EXPIRE is active, convert it
+    # to a non-expiry key
     logger.info(f'NO_EXPIRY: { "true" if NO_EXPIRY else "false" }')
     if NO_EXPIRY:
         item['expires_at'] = EPOCH_NEVER_EXPIRE
         item['valid_until'] = extension
+    # If a non-expiry key is refreshed while EXPIRE is active, convert it
+    # to an expiry key by assigning it an expiration date
     elif not NO_EXPIRY and item['expires_at'] == EPOCH_NEVER_EXPIRE:
         # first set a proper expiry
-        item['expires_at'] = now.add(seconds=604800) # set back to default length
+        item['expires_at'] = now.add(seconds=expires_seconds) # set back to default length
         # handle extension
         if extension < item['expires_at']:
             item['valid_until'] = extension
         elif extension >= item['expires_at']: # extend upto the expiry
             item['valid_until'] = item['expires_at'] 
+    # If an expiry key is refreshed while EXPIRE is active, handle normally.
     elif not NO_EXPIRY and not item['expires_at'] == EPOCH_NEVER_EXPIRE:
         # handle extension
         if extension < item['expires_at']:
             item['valid_until'] = extension
         elif extension >= item['expires_at']: # extend upto the expiry
             item['valid_until'] = item['expires_at'] 
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported refresh case")
     
     # update storage
     await redis.delete(key) 
