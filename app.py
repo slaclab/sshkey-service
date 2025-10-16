@@ -71,8 +71,9 @@ def convert_key_bundle_to_pendulum(item: dict):
     """ Convert ISO 8601 strings in the bundle to pendulum timestamps.
     """
     bundle = item.copy()
+    logger.info(f"Created At: {bundle['created_at']}, Valid Until: {bundle['valid_until']}, Expires At: {bundle['expires_at']}")
     for k in ( 'created_at', 'valid_until', 'expires_at' ):
-        if k in bundle and isinstance(bundle[k], pendulum.DateTime):
+        if k in bundle:
             bundle[k] = pendulum.parse(bundle[k])
     return bundle   
 
@@ -249,7 +250,7 @@ async def upload_user_public_key( request: Request, username: str, public_key: P
         IS_ACTIVE_FIELD: 1, # use this field to indicate if the key is valid or not, absence of field means invalid; see redis hexpire below. redis does not support bools
         'created_at': now,
         'valid_until': now.add(seconds=valid_seconds),
-        'expires_at': 0 if NO_EXPIRY else now.add(seconds=expires_seconds) # can't be none for hset
+        'expires_at': pendulum.datetime(1970, 1, 1) if NO_EXPIRY else now.add(seconds=expires_seconds) # set non-expiry tokens to epoch
     } ) 
 
     # convert pendulum to iso8601 string for storage
@@ -277,7 +278,6 @@ async def get_authorized_keys( request: Request, username: str, jinja_template: 
     keys = []
     invalid = 0
     async for k in redis.scan_iter(f"user:{username}:*"):
-
         # get item
         item = await redis.hgetall(k)
         item = convert_key_bundle_to_pendulum(item)
@@ -285,14 +285,10 @@ async def get_authorized_keys( request: Request, username: str, jinja_template: 
         # filter out expired keys or not valid keys
         # TODO: might be a better idea to keep a field on the hash to indicate if it's valid or not
         if IS_ACTIVE_FIELD in item \
-            and isinstance(item['expires_at'], pendulum.DateTime) \
+            and item['expires_at'] \
             and item['valid_until'] > now \
             and item['expires_at'] > now \
             and item['valid_until'] < item['expires_at']:
-            keys.append(item)
-        elif IS_ACTIVE_FIELD in item \
-            and item['valid_until'] > now \
-            and item['expires_at'] == 0: # still list non-expiry keys
             keys.append(item)
         else:
             invalid += 1
@@ -365,23 +361,39 @@ async def refresh_user_keypair( request: Request, username: str, finger_print: s
     item = convert_key_bundle_to_pendulum(item)
 
     # do not extend past expire time
-    if not NO_EXPIRY and isinstance(item['expires_at'], pendulum.DateTime):
+    if not NO_EXPIRY:
         if now >= item['expires_at']:
             raise HTTPException(status_code=400, detail="Cannot extend beyond the expiry date.")
+
+    logger.debug ('value v')
+    logger.debug(type(item['expires_at']))
+    logger.debug(item['expires_at'])
+    logger.debug('value ^')
     
-    # okay to extend validity
-    if isinstance(item['expires_at'], pendulum.DateTime):
-        if extension < item['expires_at']:
-           item['valid_until'] = extension
-        # extend upto the expiry
-        elif extension >= item['expires_at']:
-            # extend the expiry date
-            item['valid_until'] = item['expires_at'] 
-    else:
+    # handle expiry toggling
+    logger.info(f'NO_EXPIRY: { "true" if NO_EXPIRY else "false" }')
+    if NO_EXPIRY:
+        item['expires_at'] = pendulum.datetime(1970,1,1)
         item['valid_until'] = extension
+    elif not NO_EXPIRY and item['expires_at'] == pendulum.datetime(1970,1,1):
+        # first set a proper expiry
+        item['expires_at'] = now.add(seconds=604800) # set back to default length
+        # handle extension
+        if extension < item['expires_at']:
+            item['valid_until'] = extension
+        elif extension >= item['expires_at']: # extend upto the expiry
+            item['valid_until'] = item['expires_at'] 
+    elif not NO_EXPIRY and not item['expires_at'] == pendulum.datetime(1970,1,1):
+        # handle extension
+        if extension < item['expires_at']:
+            item['valid_until'] = extension
+        elif extension >= item['expires_at']: # extend upto the expiry
+            item['valid_until'] = item['expires_at'] 
     
     # update storage
+    await redis.delete(key) 
     item[IS_ACTIVE_FIELD] = 1 # make sure it's active
+    logger.info(f"Setting {item}")
     await redis.hset( key, mapping=convert_key_bundle_to_iso(item))
     # update is_valid ttl
     await redis.hexpire( key, extend_seconds, IS_ACTIVE_FIELD )
