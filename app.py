@@ -365,7 +365,8 @@ async def refresh_user_keypair( request: Request, username: str, finger_print: s
 
     # do not extend past expire time
     if not NO_EXPIRY:
-        if now >= item['expires_at']:
+        # raise exception on expired keys, save for non-expiry keys
+        if now >= item['expires_at'] and item['expires_at'] != EPOCH_NEVER_EXPIRE:
             raise HTTPException(status_code=400, detail="Cannot extend beyond the expiry date.")
 
     # handle EXPIRES DISABLED by:
