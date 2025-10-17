@@ -285,12 +285,13 @@ async def get_authorized_keys( request: Request, username: str, jinja_template: 
         item = convert_key_bundle_to_pendulum(item)
 
         # filter out expired keys or not valid keys
+        # allow non-expiry keys to pass through
         # TODO: might be a better idea to keep a field on the hash to indicate if it's valid or not
         if IS_ACTIVE_FIELD in item \
             and item['expires_at'] \
             and item['valid_until'] > now \
-            and item['expires_at'] > now \
-            and item['valid_until'] < item['expires_at']:
+            and (item['expires_at'] > now or item['expires_at'] == EPOCH_NEVER_EXPIRE) \
+            and (item['valid_until'] < item['expires_at'] or item['expires_at'] == EPOCH_NEVER_EXPIRE):
             keys.append(item)
         else:
             invalid += 1
