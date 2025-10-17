@@ -19,7 +19,9 @@
         <th>created_at</th>
         <th>source_ip</th>
         <th>valid_until</th>
+    {% if not no_expiry %}
         <th>expires_at</th>
+    {% endif %}
         <th>action</th>
     </tr>
 {% for key in keys %}
@@ -40,10 +42,11 @@
     <td>
 {{ key['valid_until'] }} 
     </td>
+{% if not no_expiry %}
     <td>
 {{ key['expires_at'] }} 
     </td>
-
+{% endif %}
     <td>
     <button class="refresh">Refresh</button>
     <button class="inactivate">Inactivate</button>
