@@ -12,6 +12,8 @@ from loguru import logger
 from fastapi import FastAPI, Request, status, Depends
 from fastapi.responses import PlainTextResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from fastapi.encoders import jsonable_encoder
+from fastapi.middleware.cors import CORSMiddleware
 
 from contextlib import asynccontextmanager
 import redis.asyncio as aioredis
@@ -52,6 +54,20 @@ async def lifespan(app: FastAPI):
         await app.state.redis_client.close()
 
 app = FastAPI(lifespan=lifespan)
+
+origins = [
+    "http://localhost:3000",
+    "https://coact-dev.slac.stanford.edu",
+    "https://coact.slac.stanford.edu"
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 async def get_redis_client():
     return app.state.redis_client
@@ -111,12 +127,7 @@ def auth_okay(request: Request, username: str, admin_only: bool = False, user_he
     # if we reach here, the user is good
     return found_username
 
-
-@app.get("/list/{username}")
-async def list_user_keypair( request: Request, username: str, jinja_template: str = 'list.html.j2', redis: aioredis.Redis = Depends(get_redis_client) ):
-    """
-    List the SSH key pair for the given username.
-    """
+async def __list_user_keypairs__(request: Request, username: str, redis: aioredis.Redis):
     logger.info(f"Listing SSH key pair for user: {username}")
     
     found_username = auth_okay(request, username)
@@ -129,6 +140,16 @@ async def list_user_keypair( request: Request, username: str, jinja_template: st
         logger.info(f"Found key: {item}")
         keys.append(item)
 
+    return keys
+
+
+@app.get("/list/{username}")
+async def list_user_keypair( request: Request, username: str, jinja_template: str = 'list.html.j2', redis: aioredis.Redis = Depends(get_redis_client) ):
+    """
+    List the SSH key pair for the given username.
+    """
+    keys = await __list_user_keypairs__(request, username, redis)
+
     return templates.TemplateResponse(
         name=jinja_template,  # Name of your Jinja2 template file
         request=request,    # Pass the request object
@@ -139,6 +160,15 @@ async def list_user_keypair( request: Request, username: str, jinja_template: st
         }
     )
 
+
+@app.get("/api/list/{username}")
+async def api_list_user_keypair( request: Request, username: str, jinja_template: str = 'list.html.j2', redis: aioredis.Redis = Depends(get_redis_client) ):
+    """
+    List the SSH key pair for the given username.
+    """
+    keys = await __list_user_keypairs__(request, username, redis)
+
+    return JSONResponse(jsonable_encoder(keys))
 
 
 @app.get("/register/{username}")
@@ -395,6 +425,10 @@ async def create( request: Request, action: str ):
     """
     Redirect to the personal page for action.
     """
+    print(f"Processing {action}")
+    if action not in ['register', 'list']:
+        return JSONResponse(status_code=404, content={"message": "Item not found"})
+
     assert action in ('register', 'list') # prob better to do this in the params
     found_username = auth(request)
     return RedirectResponse(url=f"/{action}/{found_username}")
