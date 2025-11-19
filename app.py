@@ -30,6 +30,9 @@ REDIS_DB = int(os.environ.get('SLACSSH_REDIS_DB', 0))
 
 USERNAME_HEADER_FIELD = os.environ.get('SLACSSH_USERNAME_HEADER_FIELD', 'REMOTE-USER')
 
+NO_EXPIRY = True
+EPOCH_NEVER_EXPIRE = pendulum.datetime(1970,1,1) # no expiration for keys set to unix epoch
+
 
 class PublicKey(BaseModel):
     public_key: str
@@ -62,7 +65,7 @@ def convert_key_bundle_to_iso(item: dict):
     """
     bundle = item.copy()
     for k in ( 'created_at', 'valid_until', 'expires_at' ):
-        if isinstance(bundle[k], pendulum.DateTime):
+        if k in bundle and isinstance(bundle[k], pendulum.DateTime):
             bundle[k] = bundle[k].to_iso8601_string()
     return bundle
 
@@ -70,8 +73,10 @@ def convert_key_bundle_to_pendulum(item: dict):
     """ Convert ISO 8601 strings in the bundle to pendulum timestamps.
     """
     bundle = item.copy()
+    logger.info(f"Created At: {bundle['created_at']}, Valid Until: {bundle['valid_until']}, Expires At: {bundle['expires_at']}")
     for k in ( 'created_at', 'valid_until', 'expires_at' ):
-        bundle[k] = pendulum.parse(bundle[k])
+        if k in bundle:
+            bundle[k] = pendulum.parse(bundle[k])
     return bundle   
 
 def auth(request: Request, user_header: str = USERNAME_HEADER_FIELD):
@@ -135,7 +140,8 @@ async def list_user_keypair( request: Request, username: str, jinja_template: st
         context={
             "title": "list",
             "username": username, 
-            "keys": keys
+            "keys": keys,
+            "no_expiry": NO_EXPIRY
         }
     )
 
@@ -171,7 +177,7 @@ async def upload_user_public_key( request: Request, username: str, public_key: P
 
     logger.info(f"Uploading public key for user: {username}: {public_key.public_key}")
 
-    # shoudl check if the public key is already registered
+    # should check if the public key is already registered
     def determine_public_key(key: str) -> str:
         """
         Strips the public key of any comments or other unnecessary parts.
@@ -246,7 +252,7 @@ async def upload_user_public_key( request: Request, username: str, public_key: P
         IS_ACTIVE_FIELD: 1, # use this field to indicate if the key is valid or not, absence of field means invalid; see redis hexpire below. redis does not support bools
         'created_at': now,
         'valid_until': now.add(seconds=valid_seconds),
-        'expires_at': now.add(seconds=expires_seconds)
+        'expires_at': EPOCH_NEVER_EXPIRE if NO_EXPIRY else now.add(seconds=expires_seconds) # set non-expiry tokens to epoch
     } ) 
 
     # convert pendulum to iso8601 string for storage
@@ -274,17 +280,18 @@ async def get_authorized_keys( request: Request, username: str, jinja_template: 
     keys = []
     invalid = 0
     async for k in redis.scan_iter(f"user:{username}:*"):
-
         # get item
         item = await redis.hgetall(k)
         item = convert_key_bundle_to_pendulum(item)
 
         # filter out expired keys or not valid keys
+        # allow non-expiry keys to pass through
         # TODO: might be a better idea to keep a field on the hash to indicate if it's valid or not
         if IS_ACTIVE_FIELD in item \
+            and item['expires_at'] \
             and item['valid_until'] > now \
-            and item['expires_at'] > now \
-            and item['valid_until'] < item['expires_at']:
+            and (item['expires_at'] > now or item['expires_at'] == EPOCH_NEVER_EXPIRE) \
+            and (item['valid_until'] < item['expires_at'] or item['expires_at'] == EPOCH_NEVER_EXPIRE):
             keys.append(item)
         else:
             invalid += 1
@@ -326,21 +333,19 @@ async def inactivate_user_keypair( request: Request, username: str, finger_print
     
     key = f"user:{username}:{finger_print}"
     # TODO: probably better to have a field in the hash to indicate it's invalid/expired to prevent key reuse
-    item = await redis.hgetall(key)
-    if not item:
+    if not (item := await redis.hgetall(key)):
         raise HTTPException(status_code=404, detail=f"No SSH public key found for {username} with fingerprint {finger_print}.")
 
     # stupid dragonfly won't overwrite the hexpire. so lets delete the hash altogether and rewrite it
     await redis.delete(key) 
-    del item[IS_ACTIVE_FIELD] # remove the is_active field so that it's no longer valid
-    item['valid_until'] = pendulum.now()
+    item.pop(IS_ACTIVE_FIELD, None) # remove the is_active field so that it's no longer valid
     logger.info(f"Setting {item}")
     await redis.hset( key, mapping=convert_key_bundle_to_iso(item))
 
     return True
 
 @app.patch("/refresh/{username}/{finger_print}")
-async def refresh_user_keypair( request: Request, username: str, finger_print: str, extend_seconds: int = 90000, redis: aioredis.Redis = Depends(get_redis_client)):
+async def refresh_user_keypair( request: Request, username: str, finger_print: str, extend_seconds: int = 90000, expires_seconds: int = 604800, redis: aioredis.Redis = Depends(get_redis_client)):
     """
     Refresh the SSH key pair for the given username and fingerprint.
     """
@@ -359,19 +364,34 @@ async def refresh_user_keypair( request: Request, username: str, finger_print: s
     item = convert_key_bundle_to_pendulum(item)
 
     # do not extend past expire time
-    if now >= item['expires_at']:
-        raise HTTPException(status_code=400, detail="Cannot extend beyond the expiry date.")
-    
-    # okay to extend validity
-    if extension < item['expires_at']:
-       item['valid_until'] = extension
-    # extend upto the expiry
-    elif extension >= item['expires_at']:
-        # extend the expiry date
-        item['valid_until'] = item['expires_at'] 
-    
+    if not NO_EXPIRY:
+        # raise exception on expired keys, save for non-expiry keys
+        if now >= item['expires_at'] and item['expires_at'] != EPOCH_NEVER_EXPIRE:
+            raise HTTPException(status_code=400, detail="Cannot extend beyond the expiry date.")
+
+    # handle EXPIRES DISABLED by:
+    # If a key with an expiration date is refreshed while NO EXPIRE is active, convert it
+    # to a non-expiry key, then grant extension
+    if NO_EXPIRY:
+        item['expires_at'] = EPOCH_NEVER_EXPIRE # set expire
+        item['valid_until'] = extension
+    # handle EXPIRES ENABLED by:
+    # If a non-expiry key is refreshed while EXPIRE is active, convert it
+    # to an expiry key by assigning it an expiration date, then extend normally
+    else:
+        # set a proper expire date
+        if item['expires_at'] == EPOCH_NEVER_EXPIRE:
+            item['expires_at'] = now.add(seconds=expires_seconds)
+        # proceed as normal, increase to extension or only up to expiry
+        if extension <= item['expires_at']:
+            item['valid_until'] = extension
+        else:
+            item['valid_until'] = item['expires_at']
+        
     # update storage
+    await redis.delete(key) 
     item[IS_ACTIVE_FIELD] = 1 # make sure it's active
+    logger.info(f"Setting {item}")
     await redis.hset( key, mapping=convert_key_bundle_to_iso(item))
     # update is_valid ttl
     await redis.hexpire( key, extend_seconds, IS_ACTIVE_FIELD )
