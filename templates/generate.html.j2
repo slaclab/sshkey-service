@@ -37,7 +37,7 @@ mv {{ prefix_path }}/temp-key {{ prefix_path }}/${fingerprint}
 mv {{ prefix_path }}/temp-key.pub {{ prefix_path }}/${fingerprint}.pub
 
 # configure your local ssh configuration to include the s3df config
-grep -q "Include {{ prefix_path }}/s3df.conf" ~/.ssh/config || echo -e "Include {{ prefix_path }}/s3df.conf\n\n$(< ~/.ssh/config)" > ~/.ssh/config
+grep -q "Include {{ prefix_path }}/s3df.conf" ~/.ssh/config || echo -en "Include {{ prefix_path }}/s3df.conf\n\n$(< ~/.ssh/config)" > ~/.ssh/config
 
 # add s3df ssh dropin config to utilize the private key when ssh'ing into S3DF
 cat > {{ prefix_path }}/s3df.conf << EOF
