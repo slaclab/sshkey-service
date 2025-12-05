@@ -16,19 +16,19 @@
     <h1>{{ username }}</h1>
     <p>{{ message }}</p>
 
-    <p>This page provides instructions for generating a new SSH keypair for use with S3DF. Specifically, we present shell commands that you should paste into your local (eg laptop) terminal that will create a SSH private and public keypair. You will then be able to utilize this keypair to SSH into S3DF without having to always enter a username, password and 2factor (duo).</p>
+    <p>This page provides instructions for generating a new SSH key pair for use with S3DF. Specifically, we present shell commands that you should paste into your local (eg laptop) terminal that will create a SSH private and public key pair. You will then be able to utilize this key pair to SSH into S3DF without having to always enter a username, password and 2factor (duo).</p>
     
-    <p>Our implementation also considers the use of time limited SSH keys, so the generated keypair that is only valid for a limited time period. This is currently set to a maximum of 7 days. For further security, you will also need to <a href="/list/{{ username }}">refresh'</a> your keys at least every 25 hours for the keypair to be valid.</p>
-    <p>You may generate as may keypairs as you like and on as many computers as you like. However, you must register each public key with our service before you can use it to access S3DF.</p>
+    <p>Our implementation also considers the use of time-limited SSH keys, so the generated key pair is only valid for a limited time period. This is currently set to a maximum of 7 days. For further security, you will also need to <a href="/list/{{ username }}">refresh</a> your keys at least once every 25 hours for the key pair to be valid.</p>
+    <p>You may generate as may key pairs as you like and on as many computers as you like. However, you must register each public key with our service before you can use it to access S3DF.</p>
 
-    <p>To create a new private key, please use the enter commands on the computer terminal:</p>
+    <p>To create a new key pair, please enter the below commands on the computer terminal:</p>
 
     <pre><code>
 
-# setup the local directories for the keypairs
+# setup the local directories for the key pairs
 mkdir -p {{ prefix_path }} && chmod 700 {{ prefix_path }}
 
-# generate a new keypair
+# generate a new key pair
 ssh-keygen -t {{ key_type }} -f {{ prefix_path }}/temp-key -C "{{ username }}"
 # determine the SHA256 fingerprint and move the key to the correct location
 fingerprint=$(ssh-keygen -lf {{ prefix_path }}/temp-key | cut -f2 -d' ' | sed 's|[/+]|.|g')
@@ -36,11 +36,8 @@ mv {{ prefix_path }}/temp-key {{ prefix_path }}/${fingerprint}
 # perhaps just delete this?
 mv {{ prefix_path }}/temp-key.pub {{ prefix_path }}/${fingerprint}.pub
 
-# remove any old keypairs that are probably expired
-find {{ prefix_path }} -type f -name 'SHA256:*' ! -name '*.pub' -print0 -atime +14 # -delete
-
 # configure your local ssh configuration to include the s3df config
-grep -q "Include {{ prefix_path }}/s3df.conf" ~/.ssh/config || sed -i '1s@^@Include {{ prefix_path }}/s3df.conf\n\n@' ~/.ssh/config
+grep -q "Include {{ prefix_path }}/s3df.conf" ~/.ssh/config || echo -en "Include {{ prefix_path }}/s3df.conf\n\n$(< ~/.ssh/config)" > ~/.ssh/config
 
 # add s3df ssh dropin config to utilize the private key when ssh'ing into S3DF
 cat > {{ prefix_path }}/s3df.conf << EOF
@@ -52,7 +49,7 @@ EOF
 echo
 echo
 
-# determine the public key for your newly minted keypair - this must be uploaded to our servers so that you can use this keypair to access S3DF
+# determine the public key for your newly minted key pair - this must be uploaded to our servers so that you can use this key pair to access S3DF
 ssh-keygen -e -f {{ prefix_path }}/${fingerprint}
 
 
