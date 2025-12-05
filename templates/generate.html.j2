@@ -36,9 +36,6 @@ mv {{ prefix_path }}/temp-key {{ prefix_path }}/${fingerprint}
 # perhaps just delete this?
 mv {{ prefix_path }}/temp-key.pub {{ prefix_path }}/${fingerprint}.pub
 
-# remove any old key pairs that are probably expired
-find {{ prefix_path }} -type f -name 'SHA256:*' ! -name '*.pub' -print0 -atime +14 # -delete
-
 # configure your local ssh configuration to include the s3df config
 grep -q "Include {{ prefix_path }}/s3df.conf" ~/.ssh/config || echo -e "Include {{ prefix_path }}/s3df.conf\n\n$(< ~/.ssh/config)" > ~/.ssh/config
 
