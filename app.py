@@ -30,6 +30,10 @@ REDIS_DB = int(os.environ.get('SLACSSH_REDIS_DB', 0))
 
 USERNAME_HEADER_FIELD = os.environ.get('SLACSSH_USERNAME_HEADER_FIELD', 'REMOTE-USER')
 
+# validity of key use
+VALIDITY_PERIOD = os.environ.get('SLACSSH_VALIDITY_PERIOD', 90000 )
+
+# whether the key expires or not
 NO_EXPIRY = True
 EPOCH_NEVER_EXPIRE = pendulum.datetime(1970,1,1) # no expiration for keys set to unix epoch
 
@@ -77,7 +81,7 @@ def convert_key_bundle_to_pendulum(item: dict):
     for k in ( 'created_at', 'valid_until', 'expires_at' ):
         if k in bundle:
             bundle[k] = pendulum.parse(bundle[k])
-    return bundle   
+    return bundle
 
 def auth(request: Request, user_header: str = USERNAME_HEADER_FIELD):
     """
@@ -111,7 +115,7 @@ def auth_okay(request: Request, username: str, admin_only: bool = False, user_he
         if found_username not in admins:
             logger.error(f"Unauthorized admin access attempt by user: {found_username}.")
             raise HTTPException(status_code=403, detail=f"Forbidden: User {found_username} is not an admin.")
-    
+
     logger.info(f"User {found_username} is authorized to access the resource.")
     # if we reach here, the user is good
     return found_username
@@ -123,7 +127,7 @@ async def list_user_keypair( request: Request, username: str, jinja_template: st
     List the SSH key pair for the given username.
     """
     logger.info(f"Listing SSH key pair for user: {username}")
-    
+
     found_username = auth_okay(request, username)
 
     # TODO: should probably pipeline this...
@@ -139,7 +143,7 @@ async def list_user_keypair( request: Request, username: str, jinja_template: st
         request=request,    # Pass the request object
         context={
             "title": "list",
-            "username": username, 
+            "username": username,
             "keys": keys,
             "no_expiry": NO_EXPIRY
         }
@@ -160,17 +164,19 @@ async def register_user_keypair( request: Request, username: str, key_type: str 
         name=jinja_template,  # Name of your Jinja2 template file
         request=request,    # Pass the request object
         context={
-            "title": "s3df ssh keypair service", 
-            "username": username, 
+            "title": "s3df ssh keypair service",
+            "username": username,
             "key_type": key_type,
             "key_bits": key_bits,
-            "prefix_path": "~/.ssh/s3df"
+            "prefix_path": "~/.ssh/s3df",
+            "no_expiry": NO_EXPIRY,
+            "validity_period": VALIDITY_PERIOD
         }
     )
 
 
 @app.post("/upload/{username}")
-async def upload_user_public_key( request: Request, username: str, public_key: PublicKey, source_ip_header_field: str = 'x-real-ip', valid_seconds: int = 90000, expires_seconds: int = 604800, redis: aioredis.Redis = Depends(get_redis_client)):
+async def upload_user_public_key( request: Request, username: str, public_key: PublicKey, source_ip_header_field: str = 'x-real-ip', valid_seconds: int = VALIDITY_PERIOD, expires_seconds: int = 604800, redis: aioredis.Redis = Depends(get_redis_client)):
     """ Uploads the public key for the given username.
     """
     found_username = auth_okay(request, username)
@@ -221,10 +227,10 @@ async def upload_user_public_key( request: Request, username: str, public_key: P
             found = paramiko.PKey.from_type_string(key_type, base64.b64decode(key_data_base64))
         except Exception as e:
             raise HTTPException(status_code=400, detail="Could not parse the public key. Please ensure it is in the correct format.")
-        
+
         # remove trailing '=' and replace '/' with '.' since we can't have filenames with '/' in them
         finger_print = found.fingerprint.rstrip('=').replace('/','.').replace('+','.')
-        
+
         logger.info(f"Found public key {finger_print}: {found}")
         return finger_print, found
 
@@ -235,7 +241,7 @@ async def upload_user_public_key( request: Request, username: str, public_key: P
     logger.info(f"existing_key: {existing_key}")
     if existing_key:
         raise HTTPException(status_code=400, detail="Public key already registered for this fingerprint. Please upload a different public key or refresh the existing one.")
-                            
+
     # update timestamps, source_ip and user information
     bundle = {
         'username': username,
@@ -246,14 +252,14 @@ async def upload_user_public_key( request: Request, username: str, public_key: P
     }
 
     # determine time ranges
-    now = pendulum.now() 
+    now = pendulum.now()
     bundle.update( {
         'source_ip': request.headers.get(source_ip_header_field, request.client.host),
         IS_ACTIVE_FIELD: 1, # use this field to indicate if the key is valid or not, absence of field means invalid; see redis hexpire below. redis does not support bools
         'created_at': now,
         'valid_until': now.add(seconds=valid_seconds),
         'expires_at': EPOCH_NEVER_EXPIRE if NO_EXPIRY else now.add(seconds=expires_seconds) # set non-expiry tokens to epoch
-    } ) 
+    } )
 
     # convert pendulum to iso8601 string for storage
     item = convert_key_bundle_to_iso(bundle)
@@ -269,12 +275,12 @@ async def upload_user_public_key( request: Request, username: str, public_key: P
 
 
 @app.get("/authorized_keys/{username}", response_class=PlainTextResponse)
-async def get_authorized_keys( request: Request, username: str, jinja_template: str = 'authorized_keys.j2', redis: aioredis.Redis = Depends(get_redis_client)): 
+async def get_authorized_keys( request: Request, username: str, jinja_template: str = 'authorized_keys.j2', redis: aioredis.Redis = Depends(get_redis_client)):
     """
     Returns the valid public keys in authorized_keys format
     """
     logger.info(f"Fetching authorized keys for user: {username}")
-    
+
     now = pendulum.now()
 
     keys = []
@@ -302,9 +308,10 @@ async def get_authorized_keys( request: Request, username: str, jinja_template: 
         name=jinja_template,  # Name of your Jinja2 template file
         request=request,    # Pass the request object
         context={
-            "title": "ssh hackapp", 
-            "username": username, 
-            "keys": keys
+            "title": "ssh hackapp",
+            "username": username,
+            "keys": keys,
+            "no_expiry": NO_EXPIRY
         }
     )
 
@@ -315,12 +322,12 @@ async def destroy_user_keypair( request: Request, username: str, finger_print: s
     """
     found_username = auth_okay(request, username, admin_only=True)
     logger.info(f"Destroying SSH key pair for user: {username} with fingerprint: {finger_print}")
-    
+
     # TODO: probably better to have a field in the hash to indicate it's invalid/expired to prevent key reuse
     item = await redis.hgetall(f"user:{username}:{finger_print}")
     if not item:
-        raise HTTPException(status_code=404, detail=f"No SSH public key found for {username} with fingerprint {finger_print}.") 
-    
+        raise HTTPException(status_code=404, detail=f"No SSH public key found for {username} with fingerprint {finger_print}.")
+
     return await redis.delete(f"user:{username}:{finger_print}")
 
 @app.delete("/inactivate/{username}/{finger_print}", status_code=status.HTTP_204_NO_CONTENT)
@@ -330,14 +337,14 @@ async def inactivate_user_keypair( request: Request, username: str, finger_print
     """
     found_username = auth_okay(request, username)
     logger.info(f"Invalidate SSH key pair for user: {username} with fingerprint: {finger_print}")
-    
+
     key = f"user:{username}:{finger_print}"
     # TODO: probably better to have a field in the hash to indicate it's invalid/expired to prevent key reuse
     if not (item := await redis.hgetall(key)):
         raise HTTPException(status_code=404, detail=f"No SSH public key found for {username} with fingerprint {finger_print}.")
 
     # stupid dragonfly won't overwrite the hexpire. so lets delete the hash altogether and rewrite it
-    await redis.delete(key) 
+    await redis.delete(key)
     item.pop(IS_ACTIVE_FIELD, None) # remove the is_active field so that it's no longer valid
     logger.info(f"Setting {item}")
     await redis.hset( key, mapping=convert_key_bundle_to_iso(item))
@@ -345,13 +352,13 @@ async def inactivate_user_keypair( request: Request, username: str, finger_print
     return True
 
 @app.patch("/refresh/{username}/{finger_print}")
-async def refresh_user_keypair( request: Request, username: str, finger_print: str, extend_seconds: int = 90000, expires_seconds: int = 604800, redis: aioredis.Redis = Depends(get_redis_client)):
+async def refresh_user_keypair( request: Request, username: str, finger_print: str, extend_seconds: int = VALIDITY_PERIOD, expires_seconds: int = 604800, redis: aioredis.Redis = Depends(get_redis_client)):
     """
     Refresh the SSH key pair for the given username and fingerprint.
     """
     found_username = auth_okay(request, username)
     logger.info(f"Refreshing SSH key pair for user: {username} with fingerprint: {finger_print}")
-    
+
     # allow an extra number of hours
     now = pendulum.now()
     extension = now.add(seconds=extend_seconds)
@@ -387,9 +394,9 @@ async def refresh_user_keypair( request: Request, username: str, finger_print: s
             item['valid_until'] = extension
         else:
             item['valid_until'] = item['expires_at']
-        
+
     # update storage
-    await redis.delete(key) 
+    await redis.delete(key)
     item[IS_ACTIVE_FIELD] = 1 # make sure it's active
     logger.info(f"Setting {item}")
     await redis.hset( key, mapping=convert_key_bundle_to_iso(item))
@@ -398,14 +405,14 @@ async def refresh_user_keypair( request: Request, username: str, finger_print: s
 
     return True
 
-    
+
 @app.get("/")
 async def index( request: Request, jinja_template: str = 'index.html.j2'):
     return templates.TemplateResponse(
         name=jinja_template,  # Name of your Jinja2 template file
         request=request,    # Pass the request object
         context={
-            "title": "slac ssh server", 
+            "title": "slac ssh server",
         }
     )
 
@@ -423,8 +430,3 @@ async def create( request: Request, action: str ):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
-
-
-
-
