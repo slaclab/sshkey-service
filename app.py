@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, status, Depends
 
 import paramiko
 from pydantic import BaseModel
@@ -9,7 +9,6 @@ import io
 import binascii
 from loguru import logger
 
-from fastapi import FastAPI, Request, status, Depends
 from fastapi.responses import PlainTextResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
@@ -19,6 +18,8 @@ import redis.asyncio as aioredis
 import pendulum
 import hashlib
 import base64
+from enum import Enum
+
 
 templates = Jinja2Templates(directory="templates")
 
@@ -37,12 +38,23 @@ VALIDITY_PERIOD = os.environ.get('SLACSSH_VALIDITY_PERIOD', 90000 )
 NO_EXPIRY = True
 EPOCH_NEVER_EXPIRE = pendulum.datetime(1970,1,1) # no expiration for keys set to unix epoch
 
+# use this to determine the redis hash field to indicate if the key is active or not; use hexpire where necessary
+IS_ACTIVE_FIELD = 'is_active'
+
 
 class PublicKey(BaseModel):
     public_key: str
 
-# use this to determine the redis hash field to indicate if the key is active or not; use hexpire where necessary
-IS_ACTIVE_FIELD = 'is_active'
+class ResponseType(str, Enum):
+    HTML = "html"
+    JSON = "json"
+
+def get_response_type(request: Request) -> ResponseType:
+    accept = request.headers.get("accept", "")
+    if "text/html" in accept:
+        return ResponseType.HTML
+    return ResponseType.JSON
+
 
 # initiate redis client
 @asynccontextmanager
@@ -122,7 +134,11 @@ def auth_okay(request: Request, username: str, admin_only: bool = False, user_he
 
 
 @app.get("/list/{username}")
-async def list_user_keypair( request: Request, username: str, jinja_template: str = 'list.html.j2', redis: aioredis.Redis = Depends(get_redis_client) ):
+async def list_user_keypair(
+      request: Request,
+      username: str,
+      jinja_template: str = 'list.html.j2',
+      redis: aioredis.Redis = Depends(get_redis_client) ):
     """
     List the SSH key pair for the given username.
     """
@@ -138,17 +154,23 @@ async def list_user_keypair( request: Request, username: str, jinja_template: st
         logger.info(f"Found key: {item}")
         keys.append(item)
 
-    return templates.TemplateResponse(
-        name=jinja_template,  # Name of your Jinja2 template file
-        request=request,    # Pass the request object
-        context={
-            "title": "list",
-            "username": username,
-            "keys": keys,
-            "no_expiry": NO_EXPIRY
-        }
-    )
+    # return type depending on what we got in
+    response_type = get_response_type( request )
 
+    if response_type == ResponseType.HTML:
+      return templates.TemplateResponse(
+          name=jinja_template,  # Name of your Jinja2 template file
+          request=request,    # Pass the request object
+          context={
+              "title": "list",
+              "username": username,
+              "keys": keys,
+              "no_expiry": NO_EXPIRY
+          }
+      )
+
+    else:
+      return JSONResponse( content={"message": keys}, status_code=status.HTTP_201_CREATED )
 
 
 @app.get("/register/{username}")
@@ -271,7 +293,7 @@ async def upload_user_public_key( request: Request, username: str, public_key: P
     await redis.hexpire( this_key, valid_seconds, IS_ACTIVE_FIELD )
 
     logger.info(f"Registered public key for user {username}: {finger_print}, created at {bundle['created_at']}, valid until {bundle['valid_until']}, expires at {bundle['expires_at']}")
-    return JSONResponse( content=item, status_code=status.HTTP_201_CREATED )
+    return JSONResponse( content={'message': item}, status_code=status.HTTP_201_CREATED )
 
 
 @app.get("/authorized_keys/{username}", response_class=PlainTextResponse)
@@ -403,7 +425,11 @@ async def refresh_user_keypair( request: Request, username: str, finger_print: s
     # update is_valid ttl
     await redis.hexpire( key, extend_seconds, IS_ACTIVE_FIELD )
 
-    return True
+    response_type = get_response_type(request)
+    if response_type == ResponseType.HTML:
+      return True
+    else:
+      return JSONResponse( content={'message': True}, status_code=status.HTTP_202_ACCEPTED )
 
 
 @app.get("/")
