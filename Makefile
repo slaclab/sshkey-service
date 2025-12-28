@@ -1,6 +1,6 @@
 ENVIRONMENT := sshkey-service
 CONTAINER_NAME := slaclab/sshkey-service
-CONTAINER_TAG := latest
+CONTAINER_TAG ?= latest
 CONTAINER_RT := sudo podman
 DOCKERHUB_USERNAME := slaclab
 CONTAINER_PREFIX := docker.io
