@@ -5,7 +5,7 @@
 </head>
 <body>
     <h1>{{ username }}</h1>
-    
+
     <p>Register new public key: <button onclick="window.location.href='/register/{{ username }}'" class="register">Register</button></p>
 
     {% if no_expiry %}
@@ -33,18 +33,18 @@
     <td>
 {% if key['is_active'] == "1" %}✅{% else %}❌{% endif %}
     </td>
-    <td>
-{{ key['created_at'] }} 
+    <td class="datetime" data-utc="{{ key['created_at'] }}">
+{{ key['created_at'] }}
     </td>
     <td>
 {{ key['source_ip'] }}
     </td>
-    <td>
-{{ key['valid_until'] }} 
+    <td class="datetime" data-utc="{{ key['valid_until'] }}">
+{{ key['valid_until'] }}
     </td>
 {% if not no_expiry %}
-    <td>
-{{ key['expires_at'] }} 
+    <td class="datetime" data-utc="{{ key['expires_at'] }}">
+{{ key['expires_at'] }}
     </td>
 {% endif %}
     <td>
@@ -79,7 +79,7 @@
             alert('Fetch error:', error);
         })
     }
-    
+
     document.querySelectorAll(".refresh").forEach((el) => el.addEventListener("click", (ev) => {
         const fingerprint = ev.currentTarget.closest("tr").getAttribute("data-fingerprint");
         fpoperation(`../refresh/${username}/${fingerprint}`, "PATCH");
@@ -88,5 +88,31 @@
         const fingerprint = ev.currentTarget.closest("tr").getAttribute("data-fingerprint");
         fpoperation(`../inactivate/${username}/${fingerprint}`, "DELETE");
     }))
-</script>    
+
+    const padNumber = (value) => String(value).padStart(2, "0");
+
+    const formatDateToLocal = (raw) => {
+        if (!raw) {
+            return "";
+        }
+        const normalized = raw.includes("T") ? raw : raw.replace(" ", "T");
+        const date = new Date(normalized);
+        if (isNaN(date)) {
+            const fallback = raw.split(".")[0].replace("T", " ");
+            return fallback;
+        }
+        const year = date.getFullYear();
+        const month = padNumber(date.getMonth() + 1);
+        const day = padNumber(date.getDate());
+        const hours = padNumber(date.getHours());
+        const minutes = padNumber(date.getMinutes());
+        const seconds = padNumber(date.getSeconds());
+        return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
+    };
+
+    document.querySelectorAll("td[data-utc]").forEach((el) => {
+        const formatted = formatDateToLocal(el.getAttribute("data-utc"));
+        el.textContent = formatted;
+    });
+</script>
 </html>
