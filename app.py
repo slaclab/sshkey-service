@@ -20,6 +20,10 @@ import hashlib
 import base64
 from enum import Enum
 
+# Email imports
+import smtplib
+from email.mime.text import MIMEText
+
 
 templates = Jinja2Templates(directory="templates")
 
@@ -40,6 +44,17 @@ EPOCH_NEVER_EXPIRE = pendulum.datetime(1970,1,1) # no expiration for keys set to
 
 # use this to determine the redis hash field to indicate if the key is active or not; use hexpire where necessary
 IS_ACTIVE_FIELD = 'is_active'
+
+# Email configuration
+SMTP_HOST = os.environ.get('SLACSSH_SMTP_HOST', 'smtp.slac.stanford.edu')
+SMTP_PORT = int(os.environ.get('SLACSSH_SMTP_PORT', 25))
+SMTP_USER = os.environ.get('SLACSSH_SMTP_USER', '')
+SMTP_PASSWORD = os.environ.get('SLACSSH_SMTP_PASSWORD', '')
+SMTP_FROM = os.environ.get('SLACSSH_SMTP_FROM', 's3df-help@slac.stanford.edu')
+SMTP_SUBJECT = os.environ.get('SLACSSH_SMTP_SUBJECT', "[Coact] New SSH Public Key Registered")
+SMTP_USE_TLS = os.environ.get('SLACSSH_SMTP_USE_TLS', 'false').lower() == 'true'
+EMAIL_ENABLED = os.environ.get('SLACSSH_EMAIL_ENABLED', 'false').lower() == 'true'
+EMAIL_DOMAIN = os.environ.get('SLACSSH_EMAIL_DOMAIN', '@slac.stanford.edu')
 
 
 class PublicKey(BaseModel):
@@ -97,6 +112,68 @@ def convert_key_bundle_to_pendulum(item: dict):
         if k in bundle:
             bundle[k] = pendulum.parse(bundle[k])
     return bundle
+
+
+def get_user_email(username: str) -> Optional[str]:
+    """
+    Determine the user's email address from their username.
+    If EMAIL_DOMAIN is set, appends it to the username.
+    Otherwise, assumes username is already an email or returns None.
+    TODO: we probably want to make use of the user-info microservice since most users probably dont' have a local email (but forwarding works?)
+    """
+    if not username:
+        return None
+
+    if '@' in username:
+        return username
+
+    if EMAIL_DOMAIN:
+        return f"{username}{EMAIL_DOMAIN}"
+
+    return None
+
+
+async def send_email(to_email: str, subject: str, body_text: str):
+    """
+    Send an email notification asynchronously.
+
+    Args:
+        to_email: Recipient email address
+        subject: Email subject
+        body_text: Plain text body
+    """
+    if not EMAIL_ENABLED:
+        logger.debug(f"Email disabled. Would have sent email to {to_email}: {subject}")
+        return
+
+    if not to_email:
+        logger.warning("Cannot send email: recipient address is empty")
+        return
+
+    try:
+        # Create message
+        msg = MIMEText(body_text, 'plain')
+        msg['From'] = SMTP_FROM
+        msg['To'] = to_email
+        msg['Subject'] = subject
+
+        # Connect to SMTP server and send
+        if SMTP_USE_TLS:
+            server = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
+            server.starttls()
+        else:
+            server = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
+
+        if SMTP_USER and SMTP_PASSWORD:
+            server.login(SMTP_USER, SMTP_PASSWORD)
+
+        server.send_message(msg)
+        server.quit()
+
+        logger.info(f"Email sent successfully to {to_email}: {subject}")
+
+    except Exception as e:
+        logger.error(f"Failed to send email to {to_email}: {str(e)}")
 
 def auth(request: Request, user_header: str = USERNAME_HEADER_FIELD):
     """
@@ -297,6 +374,36 @@ async def upload_user_public_key( request: Request, username: str, public_key: P
     await redis.hexpire( this_key, valid_seconds, IS_ACTIVE_FIELD )
 
     logger.info(f"Registered public key for user {username}: {finger_print}, created at {bundle['created_at']}, valid until {bundle['valid_until']}, expires at {bundle['expires_at']}")
+
+    # Send email notification
+    if EMAIL_ENABLED:
+        user_email = get_user_email(username)
+        if user_email:
+
+            # Format validity information
+            valid_until_str = bundle['valid_until'].format('YYYY-MM-DD HH:mm:ss ZZ')
+            expires_at_str = "Never" if bundle['expires_at'] == EPOCH_NEVER_EXPIRE else bundle['expires_at'].format('YYYY-MM-DD HH:mm:ss ZZ')
+
+            # Render email body from template
+            email_body = templates.get_template('sshkey_registration_email.j2').render(
+                username=username,
+                fingerprint=finger_print,
+                key_type=pkey.get_name(),
+                key_bits=pkey.get_bits(),
+                source_ip=bundle['source_ip'],
+                created_at=bundle['created_at'].format('YYYY-MM-DD HH:mm:ss ZZ'),
+                valid_until=valid_until_str,
+                expires_at=expires_at_str
+            )
+
+            try:
+                await send_email(user_email, SMTP_SUBJECT, email_body)
+            except Exception as e:
+                logger.error(f"Failed to send email notification for key registration: {str(e)}")
+                # Don't fail the request if email fails
+        else:
+            logger.warning(f"Could not determine email address for user {username}. Email notification not sent.")
+
     return JSONResponse( content={'message': item}, status_code=status.HTTP_201_CREATED )
 
 
@@ -455,7 +562,7 @@ async def update_user_notes( request: Request, username: str, finger_print: str,
     item = await redis.hgetall(key)
     if not item:
         raise HTTPException(status_code=404, detail=f"No SSH public key found for {username} with fingerprint {finger_print}.")
-    
+
     # Update the user_notes field
     await redis.hset(key, 'user_notes', user_notes.user_notes)
     logger.info(f"Updated user notes for {key}: {user_notes.user_notes}")

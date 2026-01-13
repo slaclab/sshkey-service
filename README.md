@@ -17,6 +17,14 @@ AuthorizedKeysCommandUser nobody
 ```
 to sshd_config
 
+## Features
+
+- SSH key registration and management
+- Automatic key expiration and validity periods
+- Email notifications when users register new SSH keys
+- Redis-backed key storage
+- REST API and web interface
+
 # Testing
 
 basic data store at present. do not use the keys generated from this in anything put a development environment!
@@ -50,3 +58,34 @@ for the sshd side, the script for `AuthorizedKeysCommand` would be
 ```
 curl localhost:8000/authorized_keys/ytl
 ```
+
+# Email Notifications
+
+The service supports sending email notifications to users when they register a new SSH public key. This provides both confirmation and security awareness.
+
+## Configuration
+
+Email notifications are disabled by default. To enable them, configure the following environment variables:
+
+```bash
+export SLACSSH_EMAIL_ENABLED=true
+export SLACSSH_SMTP_HOST=smtp.yourdomain.com
+export SLACSSH_SMTP_PORT=587
+export SLACSSH_SMTP_USER=your-smtp-username
+export SLACSSH_SMTP_PASSWORD=your-smtp-password
+export SLACSSH_SMTP_FROM=noreply@yourdomain.com
+export SLACSSH_EMAIL_DOMAIN=@yourdomain.com
+```
+
+For detailed configuration options and examples, see [EMAIL_CONFIG.md](EMAIL_CONFIG.md).
+
+## What's included in the email
+
+When a user registers a new SSH key, they receive an email containing:
+- Key fingerprint
+- Key type and size
+- Source IP address
+- Registration timestamp
+- Validity period and expiration date
+
+This helps users track their registered keys and provides a security notification if an unauthorized key is registered.
