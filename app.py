@@ -45,6 +45,9 @@ IS_ACTIVE_FIELD = 'is_active'
 class PublicKey(BaseModel):
     public_key: str
 
+class UserNotes(BaseModel):
+    user_notes: str
+
 class ResponseType(str, Enum):
     HTML = "html"
     JSON = "json"
@@ -271,6 +274,7 @@ async def upload_user_public_key( request: Request, username: str, public_key: P
         'public_key': pkey.get_base64(),
         'key_type': pkey.get_name(),
         'key_bits': pkey.get_bits(),
+        'user_notes': '',  # initialize with empty notes
     }
 
     # determine time ranges
@@ -368,6 +372,9 @@ async def inactivate_user_keypair( request: Request, username: str, finger_print
     # stupid dragonfly won't overwrite the hexpire. so lets delete the hash altogether and rewrite it
     await redis.delete(key)
     item.pop(IS_ACTIVE_FIELD, None) # remove the is_active field so that it's no longer valid
+    # preserve user_notes if it exists
+    if 'user_notes' not in item:
+        item['user_notes'] = ''
     logger.info(f"Setting {item}")
     await redis.hset( key, mapping=convert_key_bundle_to_iso(item))
 
@@ -420,10 +427,38 @@ async def refresh_user_keypair( request: Request, username: str, finger_print: s
     # update storage
     await redis.delete(key)
     item[IS_ACTIVE_FIELD] = 1 # make sure it's active
+    # preserve user_notes if it exists
+    if 'user_notes' not in item:
+        item['user_notes'] = ''
     logger.info(f"Setting {item}")
     await redis.hset( key, mapping=convert_key_bundle_to_iso(item))
     # update is_valid ttl
     await redis.hexpire( key, extend_seconds, IS_ACTIVE_FIELD )
+
+    response_type = get_response_type(request)
+    if response_type == ResponseType.HTML:
+      return True
+    else:
+      return JSONResponse( content={'message': True}, status_code=status.HTTP_202_ACCEPTED )
+
+
+@app.patch("/notes/{username}/{finger_print}")
+async def update_user_notes( request: Request, username: str, finger_print: str, user_notes: UserNotes, redis: aioredis.Redis = Depends(get_redis_client)):
+    """
+    Update the user notes for the SSH key pair for the given username and fingerprint.
+    """
+    found_username = auth_okay(request, username)
+    logger.info(f"Updating user notes for SSH key pair for user: {username} with fingerprint: {finger_print}")
+
+    key = f"user:{username}:{finger_print}"
+
+    item = await redis.hgetall(key)
+    if not item:
+        raise HTTPException(status_code=404, detail=f"No SSH public key found for {username} with fingerprint {finger_print}.")
+    
+    # Update the user_notes field
+    await redis.hset(key, 'user_notes', user_notes.user_notes)
+    logger.info(f"Updated user notes for {key}: {user_notes.user_notes}")
 
     response_type = get_response_type(request)
     if response_type == ResponseType.HTML:

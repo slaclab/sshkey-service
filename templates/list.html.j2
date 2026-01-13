@@ -22,6 +22,7 @@
     {% if not no_expiry %}
         <th>expires_at</th>
     {% endif %}
+        <th>user_notes</th>
         <th>action</th>
     </tr>
 {% for key in keys %}
@@ -47,6 +48,9 @@
 {{ key['expires_at'] }}
     </td>
 {% endif %}
+    <td>
+    <input type="text" class="user-notes" value="{{ key.get('user_notes', '') }}" placeholder="Add notes..." style="width: 200px;" data-original-value="{{ key.get('user_notes', '') }}">
+    </td>
     <td>
     <button class="refresh">Refresh</button>
     <button class="inactivate">Inactivate</button>
@@ -88,6 +92,58 @@
         const fingerprint = ev.currentTarget.closest("tr").getAttribute("data-fingerprint");
         fpoperation(`../inactivate/${username}/${fingerprint}`, "DELETE");
     }))
+
+    // Function to save user notes
+    const saveUserNotes = (input) => {
+        const row = input.closest("tr");
+        const fingerprint = row.getAttribute("data-fingerprint");
+        const userNotes = input.value;
+        const originalValue = input.getAttribute("data-original-value");
+
+        // Only save if the value has changed
+        if (userNotes !== originalValue) {
+            fetch(`../notes/${username}/${fingerprint}`, {
+                method: "PATCH",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ user_notes: userNotes })
+            })
+            .then(response => {
+                if (response.ok) {
+                    // Update the original value to the new saved value
+                    input.setAttribute("data-original-value", userNotes);
+                    // Optional: Visual feedback - briefly change border color
+                    input.style.borderColor = "green";
+                    setTimeout(() => { input.style.borderColor = ""; }, 1000);
+                    return response.text();
+                } else {
+                    throw new Error(`Server error: ${response.status}`);
+                }
+            })
+            .catch(error => {
+                alert('Error saving notes: ' + error);
+                // Revert to original value on error
+                input.value = originalValue;
+            });
+        }
+    };
+
+    // Auto-save user notes on blur (when user leaves the field)
+    document.querySelectorAll(".user-notes").forEach((el) => {
+        el.addEventListener("blur", (ev) => {
+            saveUserNotes(ev.currentTarget);
+        });
+
+        // Auto-save user notes on Enter key press
+        el.addEventListener("keypress", (ev) => {
+            if (ev.key === "Enter") {
+                ev.preventDefault(); // Prevent form submission if in a form
+                saveUserNotes(ev.currentTarget);
+                ev.currentTarget.blur(); // Remove focus from input after saving
+            }
+        });
+    })
 
     const padNumber = (value) => String(value).padStart(2, "0");
 
