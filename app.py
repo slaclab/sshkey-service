@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, Request, status, Depends
 
+import functools
 import paramiko
 from pydantic import BaseModel
 from typing import Optional
@@ -188,43 +189,61 @@ def auth(request: Request, user_header: str = USERNAME_HEADER_FIELD):
     # if we reach here, the user is authorized
     return found_username
 
-# shudl probably refactor this as a decorator...
-# should probably be more defensive about this and default to returning false; only return true if everything checks out
-def auth_okay(request: Request, username: str, admin_only: bool = False, user_header: str = USERNAME_HEADER_FIELD):
+def auth_okay(admin_only: bool = False, user_header: str = USERNAME_HEADER_FIELD):
     """
-    Check if the logged in user is expected to be allowed to access this resource
+    Decorator to check if the logged in user is expected to be allowed to access this resource.
+
+    The decorated function must have 'request' and 'username' parameters.
+    Injects 'found_username' as a keyword argument to the wrapped function.
+
+    Args:
+        admin_only: If True, only admins can access this resource
+        user_header: The header field containing the username
     """
-    #logger.debug(f'all headers: {request.headers}')
-    # only allow user defined in the request, or if user is admin
-    admins = os.getenv('SLACSSH_ADMINS', '').split(',')
-    found_username = auth(request, user_header)
+    def decorator(func):
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            # Extract request and username from kwargs or args
+            request = kwargs.get('request')
+            username = kwargs.get('username')
 
-    if not admin_only:
-        if found_username != username and found_username not in admins:
-            logger.error(f"Unauthorized access attempt by user: {found_username}. Expected user: {username}.")
-            raise HTTPException(status_code=403, detail=f"Forbidden: User {found_username} is not allowed to access this resource.")
-    else:
-        if found_username not in admins:
-            logger.error(f"Unauthorized admin access attempt by user: {found_username}.")
-            raise HTTPException(status_code=403, detail=f"Forbidden: User {found_username} is not an admin.")
+            if request is None or username is None:
+                raise HTTPException(status_code=500, detail="Internal error: request or username not found in function arguments.")
 
-    logger.info(f"User {found_username} is authorized to access the resource.")
-    # if we reach here, the user is good
-    return found_username
+            # only allow user defined in the request, or if user is admin
+            admins = os.getenv('SLACSSH_ADMINS', '').split(',')
+            found_username = auth(request, user_header)
+
+            if not admin_only:
+                if found_username != username and found_username not in admins:
+                    logger.error(f"Unauthorized access attempt by user: {found_username}. Expected user: {username}.")
+                    raise HTTPException(status_code=403, detail=f"Forbidden: User {found_username} is not allowed to access this resource.")
+            else:
+                if found_username not in admins:
+                    logger.error(f"Unauthorized admin access attempt by user: {found_username}.")
+                    raise HTTPException(status_code=403, detail=f"Forbidden: User {found_username} is not an admin.")
+
+            logger.info(f"User {found_username} is authorized to access the resource.")
+
+            # Inject found_username into the function kwargs
+            kwargs['found_username'] = found_username
+            return await func(*args, **kwargs)
+        return wrapper
+    return decorator
 
 
 @app.get("/list/{username}")
+@auth_okay()
 async def list_user_keypair(
       request: Request,
       username: str,
       jinja_template: str = 'list.html.j2',
-      redis: aioredis.Redis = Depends(get_redis_client) ):
+      redis: aioredis.Redis = Depends(get_redis_client),
+      found_username: str = None ):
     """
     List the SSH key pair for the given username.
     """
     logger.info(f"Listing SSH key pair for user: {username}")
-
-    found_username = auth_okay(request, username)
 
     # TODO: should probably pipeline this...
     keys = []
@@ -254,11 +273,11 @@ async def list_user_keypair(
 
 
 @app.get("/register/{username}")
-async def register_user_keypair( request: Request, username: str, key_type: str = "ed25519", key_bits: int = 2048, jinja_template: str = 'register.html.j2'):
+@auth_okay()
+async def register_user_keypair( request: Request, username: str, key_type: str = "ed25519", key_bits: int = 2048, jinja_template: str = 'register.html.j2', found_username: str = None):
     """
     shows instructions for how to create a keypair and upload it to us
     """
-    found_username = auth_okay(request, username)
 
     logger.info(f"Generating SSH key pair for user: {username} with type: {key_type} and bits: {key_bits}")
 
@@ -278,10 +297,10 @@ async def register_user_keypair( request: Request, username: str, key_type: str 
 
 
 @app.post("/upload/{username}")
-async def upload_user_public_key( request: Request, username: str, public_key: PublicKey, source_ip_header_field: str = 'x-real-ip', valid_seconds: int = VALIDITY_PERIOD, expires_seconds: int = 604800, redis: aioredis.Redis = Depends(get_redis_client)):
+@auth_okay()
+async def upload_user_public_key( request: Request, username: str, public_key: PublicKey, source_ip_header_field: str = 'x-real-ip', valid_seconds: int = VALIDITY_PERIOD, expires_seconds: int = 604800, redis: aioredis.Redis = Depends(get_redis_client), found_username: str = None):
     """ Uploads the public key for the given username.
     """
-    found_username = auth_okay(request, username)
 
     logger.info(f"Uploading public key for user: {username}: {public_key.public_key}")
 
@@ -449,11 +468,11 @@ async def get_authorized_keys( request: Request, username: str, jinja_template: 
     )
 
 @app.delete("/destroy/{username}/{finger_print}", status_code=status.HTTP_204_NO_CONTENT)
-async def destroy_user_keypair( request: Request, username: str, finger_print: str, redis: aioredis.Redis = Depends(get_redis_client)):
+@auth_okay(admin_only=True)
+async def destroy_user_keypair( request: Request, username: str, finger_print: str, redis: aioredis.Redis = Depends(get_redis_client), found_username: str = None):
     """
     Destroy the SSH key pair for the given username and fingerprint.
     """
-    found_username = auth_okay(request, username, admin_only=True)
     logger.info(f"Destroying SSH key pair for user: {username} with fingerprint: {finger_print}")
 
     # TODO: probably better to have a field in the hash to indicate it's invalid/expired to prevent key reuse
@@ -464,11 +483,11 @@ async def destroy_user_keypair( request: Request, username: str, finger_print: s
     return await redis.delete(f"user:{username}:{finger_print}")
 
 @app.delete("/inactivate/{username}/{finger_print}", status_code=status.HTTP_204_NO_CONTENT)
-async def inactivate_user_keypair( request: Request, username: str, finger_print: str, redis: aioredis.Redis = Depends(get_redis_client)):
+@auth_okay()
+async def inactivate_user_keypair( request: Request, username: str, finger_print: str, redis: aioredis.Redis = Depends(get_redis_client), found_username: str = None):
     """
     Invalidate the SSH key pair for the given username and fingerprint.
     """
-    found_username = auth_okay(request, username)
     logger.info(f"Invalidate SSH key pair for user: {username} with fingerprint: {finger_print}")
 
     key = f"user:{username}:{finger_print}"
@@ -488,11 +507,11 @@ async def inactivate_user_keypair( request: Request, username: str, finger_print
     return True
 
 @app.patch("/refresh/{username}/{finger_print}")
-async def refresh_user_keypair( request: Request, username: str, finger_print: str, extend_seconds: int = VALIDITY_PERIOD, expires_seconds: int = 604800, redis: aioredis.Redis = Depends(get_redis_client)):
+@auth_okay()
+async def refresh_user_keypair( request: Request, username: str, finger_print: str, extend_seconds: int = VALIDITY_PERIOD, expires_seconds: int = 604800, redis: aioredis.Redis = Depends(get_redis_client), found_username: str = None):
     """
     Refresh the SSH key pair for the given username and fingerprint.
     """
-    found_username = auth_okay(request, username)
     logger.info(f"Refreshing SSH key pair for user: {username} with fingerprint: {finger_print}")
 
     # allow an extra number of hours
@@ -550,11 +569,11 @@ async def refresh_user_keypair( request: Request, username: str, finger_print: s
 
 
 @app.patch("/notes/{username}/{finger_print}")
-async def update_user_notes( request: Request, username: str, finger_print: str, user_notes: UserNotes, redis: aioredis.Redis = Depends(get_redis_client)):
+@auth_okay()
+async def update_user_notes( request: Request, username: str, finger_print: str, user_notes: UserNotes, redis: aioredis.Redis = Depends(get_redis_client), found_username: str = None):
     """
     Update the user notes for the SSH key pair for the given username and fingerprint.
     """
-    found_username = auth_okay(request, username)
     logger.info(f"Updating user notes for SSH key pair for user: {username} with fingerprint: {finger_print}")
 
     key = f"user:{username}:{finger_print}"
