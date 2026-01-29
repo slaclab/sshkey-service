@@ -2,6 +2,25 @@
 <html>
 <head>
     <title>{{ title }}</title>
+    <style>
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            background-color: #cccccc;
+        }
+        input:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            background-color: #f0f0f0;
+        }
+        .blacklist-warning {
+            cursor: help;
+            font-size: 1.2em;
+        }
+        .blacklist-warning:hover {
+            filter: brightness(1.2);
+        }
+    </style>
 </head>
 <body>
     <h1>{{ username }}</h1>
@@ -32,7 +51,7 @@
 {{ key['finger_print'] }}
     </td>
     <td>
-{% if key['is_active'] == "1" %}✅{% else %}❌{% endif %}
+{% if key.get('is_blacklisted') %}<span class="blacklist-warning" title="This SSH key fingerprint is BLACKLISTED">⚠️</span>{% elif key['is_active'] == "1" %}✅{% else %}❌{% endif %}
     </td>
     <td class="datetime" data-utc="{{ key['created_at'] }}">
 {{ key['created_at'] }}
@@ -49,11 +68,11 @@
     </td>
 {% endif %}
     <td>
-    <input type="text" class="user-notes" value="{{ key.get('user_notes', '') }}" placeholder="Add notes..." style="width: 200px;" data-original-value="{{ key.get('user_notes', '') }}">
+    <input type="text" class="user-notes" value="{{ key.get('user_notes', '') }}" placeholder="Add notes..." style="width: 200px;" data-original-value="{{ key.get('user_notes', '') }}"{% if key.get('is_blacklisted') %} disabled{% endif %}>
     </td>
     <td>
-    <button class="refresh">Refresh</button>
-    <button class="inactivate">Inactivate</button>
+    <button class="refresh"{% if key.get('is_blacklisted') %} disabled{% endif %}>Refresh</button>
+    <button class="inactivate"{% if key.get('is_blacklisted') %} disabled{% endif %}>Inactivate</button>
     </td>
 
 
@@ -85,16 +104,21 @@
     }
 
     document.querySelectorAll(".refresh").forEach((el) => el.addEventListener("click", (ev) => {
+        if (ev.currentTarget.disabled) return;
         const fingerprint = ev.currentTarget.closest("tr").getAttribute("data-fingerprint");
         fpoperation(`../refresh/${username}/${fingerprint}`, "PATCH");
     }))
     document.querySelectorAll(".inactivate").forEach((el) => el.addEventListener("click", (ev) => {
+        if (ev.currentTarget.disabled) return;
         const fingerprint = ev.currentTarget.closest("tr").getAttribute("data-fingerprint");
         fpoperation(`../inactivate/${username}/${fingerprint}`, "DELETE");
     }))
 
     // Function to save user notes
     const saveUserNotes = (input) => {
+        // Don't save if input is disabled (e.g., blacklisted key)
+        if (input.disabled) return;
+
         const row = input.closest("tr");
         const fingerprint = row.getAttribute("data-fingerprint");
         const userNotes = input.value;

@@ -304,6 +304,11 @@ async def list_user_keypair(
     async for k in redis.scan_iter(f"user:{username}:*"):
         item = await redis.hgetall(k)
         item = convert_key_bundle_to_pendulum( item )
+
+        # Check if the key is blacklisted
+        with blacklist_lock:
+            item['is_blacklisted'] = item.get('finger_print') in blacklist_fingerprints
+
         logger.info(f"Found key: {item}")
         keys.append(item)
 
@@ -556,6 +561,15 @@ async def inactivate_user_keypair( request: Request, username: str, finger_print
     """
     logger.info(f"Invalidate SSH key pair for user: {username} with fingerprint: {finger_print}")
 
+    # Check if the fingerprint is blacklisted
+    with blacklist_lock:
+        if finger_print in blacklist_fingerprints:
+            logger.warning(f"Attempt to inactivate blacklisted key for user {username}: {finger_print}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Cannot inactivate blacklisted SSH key with fingerprint {finger_print}."
+            )
+
     key = f"user:{username}:{finger_print}"
     # TODO: probably better to have a field in the hash to indicate it's invalid/expired to prevent key reuse
     if not (item := await redis.hgetall(key)):
@@ -579,6 +593,15 @@ async def refresh_user_keypair( request: Request, username: str, finger_print: s
     Refresh the SSH key pair for the given username and fingerprint.
     """
     logger.info(f"Refreshing SSH key pair for user: {username} with fingerprint: {finger_print}")
+
+    # Check if the fingerprint is blacklisted
+    with blacklist_lock:
+        if finger_print in blacklist_fingerprints:
+            logger.warning(f"Attempt to refresh blacklisted key for user {username}: {finger_print}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Cannot refresh blacklisted SSH key with fingerprint {finger_print}."
+            )
 
     # allow an extra number of hours
     now = pendulum.now()
@@ -641,6 +664,15 @@ async def update_user_notes( request: Request, username: str, finger_print: str,
     Update the user notes for the SSH key pair for the given username and fingerprint.
     """
     logger.info(f"Updating user notes for SSH key pair for user: {username} with fingerprint: {finger_print}")
+
+    # Check if the fingerprint is blacklisted
+    with blacklist_lock:
+        if finger_print in blacklist_fingerprints:
+            logger.warning(f"Attempt to update notes for blacklisted key for user {username}: {finger_print}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Cannot update notes for blacklisted SSH key with fingerprint {finger_print}."
+            )
 
     key = f"user:{username}:{finger_print}"
 

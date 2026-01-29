@@ -450,5 +450,381 @@ class TestBlacklistLogging:
             assert any('Blacklisted key found' in str(call) for call in warning_calls)
 
 
+class TestBlacklistInListView:
+    """Tests for blacklist display in list view."""
+    
+    @pytest.mark.asyncio
+    async def test_blacklisted_key_marked_in_list(self, mock_redis, sample_key_data, temp_blacklist_file):
+        """Test that blacklisted keys are marked with is_blacklisted in list view."""
+        # Setup blacklist
+        with open(temp_blacklist_file, 'w') as f:
+            f.write(f"{sample_key_data['finger_print']}\n")
+        
+        with patch('app.BLACKLIST_FILE', temp_blacklist_file):
+            reload_blacklist()
+        
+        # Mock Redis to return our sample key
+        async def mock_scan(*args, **kwargs):
+            yield f"user:{sample_key_data['username']}:{sample_key_data['finger_print']}"
+        
+        mock_redis.scan_iter = mock_scan
+        mock_redis.hgetall.return_value = {
+            k: str(v) if isinstance(v, (pendulum.DateTime, int)) else v 
+            for k, v in sample_key_data.items()
+        }
+        
+        from app import list_user_keypair
+        mock_request = Mock(spec=Request)
+        mock_request.headers = {}
+        
+        with patch('app.get_redis_client', return_value=mock_redis):
+            with patch('app.convert_key_bundle_to_pendulum', return_value=sample_key_data):
+                response = await list_user_keypair(
+                    request=mock_request,
+                    username='testuser',
+                    redis=mock_redis
+                )
+        
+        # Verify the response contains the blacklisted flag
+        assert response.status_code == 200
+        # The keys should have is_blacklisted set to True
+        # We need to check the context passed to the template
+        assert 'keys' in response.context
+        keys = response.context['keys']
+        assert len(keys) == 1
+        assert keys[0]['is_blacklisted'] is True
+    
+    @pytest.mark.asyncio
+    async def test_non_blacklisted_key_not_marked_in_list(self, mock_redis, sample_key_data, temp_blacklist_file):
+        """Test that non-blacklisted keys are not marked in list view."""
+        # Setup empty blacklist
+        with open(temp_blacklist_file, 'w') as f:
+            f.write("# Empty blacklist\n")
+        
+        with patch('app.BLACKLIST_FILE', temp_blacklist_file):
+            reload_blacklist()
+        
+        # Mock Redis to return our sample key
+        async def mock_scan(*args, **kwargs):
+            yield f"user:{sample_key_data['username']}:{sample_key_data['finger_print']}"
+        
+        mock_redis.scan_iter = mock_scan
+        mock_redis.hgetall.return_value = {
+            k: str(v) if isinstance(v, (pendulum.DateTime, int)) else v 
+            for k, v in sample_key_data.items()
+        }
+        
+        from app import list_user_keypair
+        mock_request = Mock(spec=Request)
+        mock_request.headers = {}
+        
+        with patch('app.get_redis_client', return_value=mock_redis):
+            with patch('app.convert_key_bundle_to_pendulum', return_value=sample_key_data):
+                response = await list_user_keypair(
+                    request=mock_request,
+                    username='testuser',
+                    redis=mock_redis
+                )
+        
+        # Verify the response contains the blacklisted flag set to False
+        assert response.status_code == 200
+        assert 'keys' in response.context
+        keys = response.context['keys']
+        assert len(keys) == 1
+        assert keys[0]['is_blacklisted'] is False
+
+    @pytest.mark.asyncio
+    async def test_blacklisted_key_html_has_disabled_controls(self, mock_redis, sample_key_data, temp_blacklist_file):
+        """Test that blacklisted keys have disabled buttons and inputs in HTML."""
+        # Setup blacklist
+        with open(temp_blacklist_file, 'w') as f:
+            f.write(f"{sample_key_data['finger_print']}\n")
+        
+        with patch('app.BLACKLIST_FILE', temp_blacklist_file):
+            reload_blacklist()
+        
+        # Mock Redis to return our sample key
+        async def mock_scan(*args, **kwargs):
+            yield f"user:{sample_key_data['username']}:{sample_key_data['finger_print']}"
+        
+        mock_redis.scan_iter = mock_scan
+        mock_redis.hgetall.return_value = {
+            k: str(v) if isinstance(v, (pendulum.DateTime, int)) else v 
+            for k, v in sample_key_data.items()
+        }
+        
+        from app import list_user_keypair
+        mock_request = Mock(spec=Request)
+        mock_request.headers = {}
+        
+        with patch('app.get_redis_client', return_value=mock_redis):
+            with patch('app.convert_key_bundle_to_pendulum', return_value=sample_key_data):
+                response = await list_user_keypair(
+                    request=mock_request,
+                    username='testuser',
+                    redis=mock_redis
+                )
+        
+        # Verify the HTML contains disabled attributes
+        html_content = response.body.decode('utf-8')
+        
+        # Check for disabled buttons
+        assert 'button class="refresh" disabled' in html_content
+        assert 'button class="inactivate" disabled' in html_content
+        
+        # Check for disabled input field
+        assert 'class="user-notes"' in html_content
+        assert 'disabled' in html_content
+        
+        # Check for warning icon with tooltip
+        assert '⚠️' in html_content
+        assert 'title="This SSH key fingerprint is BLACKLISTED"' in html_content
+        assert 'class="blacklist-warning"' in html_content
+
+
+class TestBlacklistEndpointProtection:
+    """Tests for blacklist protection on refresh, inactivate, and notes endpoints."""
+    
+    @pytest.mark.asyncio
+    async def test_refresh_blacklisted_key_returns_forbidden(self, mock_redis, sample_key_data, temp_blacklist_file):
+        """Test that attempting to refresh a blacklisted key returns 403 Forbidden."""
+        # Setup blacklist
+        with open(temp_blacklist_file, 'w') as f:
+            f.write(f"{sample_key_data['finger_print']}\n")
+        
+        with patch('app.BLACKLIST_FILE', temp_blacklist_file):
+            reload_blacklist()
+        
+        from app import refresh_user_keypair
+        mock_request = Mock(spec=Request)
+        mock_request.headers = {}
+        
+        # Should raise HTTPException with 403 status
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc_info:
+            with patch('app.get_redis_client', return_value=mock_redis):
+                await refresh_user_keypair(
+                    request=mock_request,
+                    username='testuser',
+                    finger_print=sample_key_data['finger_print'],
+                    redis=mock_redis
+                )
+        
+        assert exc_info.value.status_code == 403
+        assert 'blacklisted' in str(exc_info.value.detail).lower()
+    
+    @pytest.mark.asyncio
+    async def test_refresh_blacklisted_key_logs_warning(self, mock_redis, sample_key_data, temp_blacklist_file):
+        """Test that attempting to refresh a blacklisted key logs a warning."""
+        # Setup blacklist
+        with open(temp_blacklist_file, 'w') as f:
+            f.write(f"{sample_key_data['finger_print']}\n")
+        
+        with patch('app.BLACKLIST_FILE', temp_blacklist_file):
+            reload_blacklist()
+        
+        from app import refresh_user_keypair
+        mock_request = Mock(spec=Request)
+        mock_request.headers = {}
+        
+        from fastapi import HTTPException
+        with patch('app.logger') as mock_logger:
+            with pytest.raises(HTTPException):
+                with patch('app.get_redis_client', return_value=mock_redis):
+                    await refresh_user_keypair(
+                        request=mock_request,
+                        username='testuser',
+                        finger_print=sample_key_data['finger_print'],
+                        redis=mock_redis
+                    )
+            
+            # Check that warning was logged
+            warning_calls = [call for call in mock_logger.warning.call_args_list]
+            assert any('Attempt to refresh blacklisted key' in str(call) for call in warning_calls)
+    
+    @pytest.mark.asyncio
+    async def test_inactivate_blacklisted_key_returns_forbidden(self, mock_redis, sample_key_data, temp_blacklist_file):
+        """Test that attempting to inactivate a blacklisted key returns 403 Forbidden."""
+        # Setup blacklist
+        with open(temp_blacklist_file, 'w') as f:
+            f.write(f"{sample_key_data['finger_print']}\n")
+        
+        with patch('app.BLACKLIST_FILE', temp_blacklist_file):
+            reload_blacklist()
+        
+        from app import inactivate_user_keypair
+        mock_request = Mock(spec=Request)
+        mock_request.headers = {}
+        
+        # Should raise HTTPException with 403 status
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc_info:
+            with patch('app.get_redis_client', return_value=mock_redis):
+                await inactivate_user_keypair(
+                    request=mock_request,
+                    username='testuser',
+                    finger_print=sample_key_data['finger_print'],
+                    redis=mock_redis
+                )
+        
+        assert exc_info.value.status_code == 403
+        assert 'blacklisted' in str(exc_info.value.detail).lower()
+    
+    @pytest.mark.asyncio
+    async def test_inactivate_blacklisted_key_logs_warning(self, mock_redis, sample_key_data, temp_blacklist_file):
+        """Test that attempting to inactivate a blacklisted key logs a warning."""
+        # Setup blacklist
+        with open(temp_blacklist_file, 'w') as f:
+            f.write(f"{sample_key_data['finger_print']}\n")
+        
+        with patch('app.BLACKLIST_FILE', temp_blacklist_file):
+            reload_blacklist()
+        
+        from app import inactivate_user_keypair
+        mock_request = Mock(spec=Request)
+        mock_request.headers = {}
+        
+        from fastapi import HTTPException
+        with patch('app.logger') as mock_logger:
+            with pytest.raises(HTTPException):
+                with patch('app.get_redis_client', return_value=mock_redis):
+                    await inactivate_user_keypair(
+                        request=mock_request,
+                        username='testuser',
+                        finger_print=sample_key_data['finger_print'],
+                        redis=mock_redis
+                    )
+            
+            # Check that warning was logged
+            warning_calls = [call for call in mock_logger.warning.call_args_list]
+            assert any('Attempt to inactivate blacklisted key' in str(call) for call in warning_calls)
+    
+    @pytest.mark.asyncio
+    async def test_update_notes_blacklisted_key_returns_forbidden(self, mock_redis, sample_key_data, temp_blacklist_file):
+        """Test that attempting to update notes for a blacklisted key returns 403 Forbidden."""
+        # Setup blacklist
+        with open(temp_blacklist_file, 'w') as f:
+            f.write(f"{sample_key_data['finger_print']}\n")
+        
+        with patch('app.BLACKLIST_FILE', temp_blacklist_file):
+            reload_blacklist()
+        
+        from app import update_user_notes, UserNotes
+        mock_request = Mock(spec=Request)
+        mock_request.headers = {}
+        user_notes = UserNotes(user_notes="Test note")
+        
+        # Should raise HTTPException with 403 status
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc_info:
+            with patch('app.get_redis_client', return_value=mock_redis):
+                await update_user_notes(
+                    request=mock_request,
+                    username='testuser',
+                    finger_print=sample_key_data['finger_print'],
+                    user_notes=user_notes,
+                    redis=mock_redis
+                )
+        
+        assert exc_info.value.status_code == 403
+        assert 'blacklisted' in str(exc_info.value.detail).lower()
+    
+    @pytest.mark.asyncio
+    async def test_update_notes_blacklisted_key_logs_warning(self, mock_redis, sample_key_data, temp_blacklist_file):
+        """Test that attempting to update notes for a blacklisted key logs a warning."""
+        # Setup blacklist
+        with open(temp_blacklist_file, 'w') as f:
+            f.write(f"{sample_key_data['finger_print']}\n")
+        
+        with patch('app.BLACKLIST_FILE', temp_blacklist_file):
+            reload_blacklist()
+        
+        from app import update_user_notes, UserNotes
+        mock_request = Mock(spec=Request)
+        mock_request.headers = {}
+        user_notes = UserNotes(user_notes="Test note")
+        
+        from fastapi import HTTPException
+        with patch('app.logger') as mock_logger:
+            with pytest.raises(HTTPException):
+                with patch('app.get_redis_client', return_value=mock_redis):
+                    await update_user_notes(
+                        request=mock_request,
+                        username='testuser',
+                        finger_print=sample_key_data['finger_print'],
+                        user_notes=user_notes,
+                        redis=mock_redis
+                    )
+            
+            # Check that warning was logged
+            warning_calls = [call for call in mock_logger.warning.call_args_list]
+            assert any('Attempt to update notes for blacklisted key' in str(call) for call in warning_calls)
+    
+    @pytest.mark.asyncio
+    async def test_non_blacklisted_key_operations_allowed(self, mock_redis, sample_key_data, temp_blacklist_file):
+        """Test that operations on non-blacklisted keys are allowed."""
+        # Setup empty blacklist
+        with open(temp_blacklist_file, 'w') as f:
+            f.write("# Empty blacklist\n")
+        
+        with patch('app.BLACKLIST_FILE', temp_blacklist_file):
+            reload_blacklist()
+        
+        # Mock Redis responses
+        mock_redis.hgetall.return_value = {
+            k: str(v) if isinstance(v, (pendulum.DateTime, int)) else v 
+            for k, v in sample_key_data.items()
+        }
+        
+        from app import refresh_user_keypair, inactivate_user_keypair, update_user_notes, UserNotes
+        mock_request = Mock(spec=Request)
+        mock_request.headers = {}
+        
+        # These should not raise HTTPException
+        from fastapi import HTTPException
+        
+        # Test refresh - should not raise
+        try:
+            with patch('app.get_redis_client', return_value=mock_redis):
+                with patch('app.convert_key_bundle_to_pendulum', return_value=sample_key_data):
+                    await refresh_user_keypair(
+                        request=mock_request,
+                        username='testuser',
+                        finger_print=sample_key_data['finger_print'],
+                        redis=mock_redis
+                    )
+        except HTTPException as e:
+            # Should not be a 403 error
+            assert e.status_code != 403
+        
+        # Test inactivate - should not raise 403
+        try:
+            with patch('app.get_redis_client', return_value=mock_redis):
+                await inactivate_user_keypair(
+                    request=mock_request,
+                    username='testuser',
+                    finger_print=sample_key_data['finger_print'],
+                    redis=mock_redis
+                )
+        except HTTPException as e:
+            # Should not be a 403 error
+            assert e.status_code != 403
+        
+        # Test update notes - should not raise 403
+        user_notes = UserNotes(user_notes="Test note")
+        try:
+            with patch('app.get_redis_client', return_value=mock_redis):
+                await update_user_notes(
+                    request=mock_request,
+                    username='testuser',
+                    finger_print=sample_key_data['finger_print'],
+                    user_notes=user_notes,
+                    redis=mock_redis
+                )
+        except HTTPException as e:
+            # Should not be a 403 error
+            assert e.status_code != 403
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
