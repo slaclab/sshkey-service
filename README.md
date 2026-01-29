@@ -24,6 +24,7 @@ to sshd_config
 - Email notifications when users register new SSH keys
 - Redis-backed key storage
 - REST API and web interface
+- Blacklist support for blocking compromised SSH key fingerprints
 
 # Testing
 
@@ -89,3 +90,61 @@ When a user registers a new SSH key, they receive an email containing:
 - Validity period and expiration date
 
 This helps users track their registered keys and provides a security notification if an unauthorized key is registered.
+
+# Testing
+
+The service includes comprehensive unit tests for all functionality, especially the blacklist feature.
+
+## Running Tests
+
+```bash
+# Run all tests
+make test
+
+# Run with coverage report
+make test-coverage
+
+# Run integration test script
+./test_blacklist.sh
+```
+
+## Test Coverage
+
+The test suite (`test_blacklist.py`) includes:
+
+- **Blacklist file loading** - Tests for parsing, comments, empty lines, and file errors
+- **Signal handling** - Tests for SIGHUP reload functionality
+- **Authorized keys integration** - Tests for blacklist checking in the API
+- **Thread safety** - Tests for concurrent access to blacklist data
+- **Logging** - Tests for appropriate log messages
+
+See [TESTING.md](TESTING.md) for detailed testing documentation.
+
+# SSH Key Blacklist
+
+The service supports maintaining a blacklist of SSH key fingerprints that should be blocked from authentication. When a fingerprint is blacklisted, it will appear as commented-out in the `authorized_keys` output, preventing its use for SSH authentication.
+
+## Quick Start
+
+1. Create a blacklist file (default location: `/etc/sshkey-service/blacklist.txt`):
+   ```bash
+   # One fingerprint per line, lines starting with # are comments
+   SHA256:compromised_fingerprint_here
+   ```
+
+2. Set the environment variable (optional, if using a different path):
+   ```bash
+   export SLACSSH_BLACKLIST_FILE=/path/to/blacklist.txt
+   ```
+
+3. Reload the blacklist without restarting the service:
+   ```bash
+   kill -HUP <pid>
+   # or
+   pkill -HUP -f app.py
+   ```
+
+For detailed information on blacklist configuration, deployment, and management, see:
+- [BLACKLIST.md](BLACKLIST.md) - Complete documentation
+- [BLACKLIST_QUICKREF.md](BLACKLIST_QUICKREF.md) - Quick reference guide
+- [TESTING.md](TESTING.md) - Testing documentation

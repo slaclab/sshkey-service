@@ -25,6 +25,10 @@ from enum import Enum
 import smtplib
 from email.mime.text import MIMEText
 
+# Signal handling for blacklist reload
+import signal
+import threading
+
 
 templates = Jinja2Templates(directory="templates")
 
@@ -57,6 +61,13 @@ SMTP_USE_TLS = os.environ.get('SLACSSH_SMTP_USE_TLS', 'false').lower() == 'true'
 EMAIL_ENABLED = os.environ.get('SLACSSH_EMAIL_ENABLED', 'false').lower() == 'true'
 EMAIL_DOMAIN = os.environ.get('SLACSSH_EMAIL_DOMAIN', '@slac.stanford.edu')
 
+# Blacklist configuration
+BLACKLIST_FILE = os.environ.get('SLACSSH_BLACKLIST_FILE', '/etc/sshkey-service/blacklist.txt')
+
+# Global set to store blacklisted fingerprints
+blacklist_fingerprints = set()
+blacklist_lock = threading.Lock()
+
 
 class PublicKey(BaseModel):
     public_key: str
@@ -78,6 +89,13 @@ def get_response_type(request: Request) -> ResponseType:
 # initiate redis client
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Load initial blacklist
+    reload_blacklist()
+
+    # Set up SIGHUP handler for blacklist reload
+    signal.signal(signal.SIGHUP, reload_blacklist)
+    logger.info("SIGHUP handler registered for blacklist reload")
+
     app.state.redis_client = aioredis.Redis(
         host=REDIS_HOST,
         port=REDIS_PORT,
@@ -88,6 +106,42 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await app.state.redis_client.close()
+
+
+def reload_blacklist(signum=None, frame=None):
+    """
+    Reload the blacklist from the file.
+    Can be called as a signal handler (SIGHUP) or directly.
+    """
+    global blacklist_fingerprints
+
+    if signum:
+        logger.info(f"Received signal {signum}, reloading blacklist...")
+    else:
+        logger.info("Loading blacklist...")
+
+    new_blacklist = set()
+
+    try:
+        if os.path.exists(BLACKLIST_FILE):
+            with open(BLACKLIST_FILE, 'r') as f:
+                for line in f:
+                    # Strip whitespace and ignore empty lines and comments
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        new_blacklist.add(line)
+
+            with blacklist_lock:
+                blacklist_fingerprints = new_blacklist
+
+            logger.info(f"Blacklist loaded: {len(blacklist_fingerprints)} fingerprints")
+        else:
+            logger.warning(f"Blacklist file not found: {BLACKLIST_FILE}")
+            with blacklist_lock:
+                blacklist_fingerprints = set()
+    except Exception as e:
+        logger.error(f"Error loading blacklist: {e}")
+
 
 app = FastAPI(lifespan=lifespan)
 
@@ -437,10 +491,22 @@ async def get_authorized_keys( request: Request, username: str, jinja_template: 
 
     keys = []
     invalid = 0
+    blacklisted = 0
     async for k in redis.scan_iter(f"user:{username}:*"):
         # get item
         item = await redis.hgetall(k)
         item = convert_key_bundle_to_pendulum(item)
+
+        # Check if fingerprint is blacklisted
+        is_blacklisted = False
+        with blacklist_lock:
+            if item.get('finger_print') in blacklist_fingerprints:
+                is_blacklisted = True
+                blacklisted += 1
+                logger.warning(f"Blacklisted key found for user {username}: {item.get('finger_print')}")
+
+        # Mark the key as blacklisted in the item
+        item['is_blacklisted'] = is_blacklisted
 
         # filter out expired keys or not valid keys
         # allow non-expiry keys to pass through
@@ -454,7 +520,7 @@ async def get_authorized_keys( request: Request, username: str, jinja_template: 
         else:
             invalid += 1
 
-    logger.info(f"Found {len(keys)} valid keys for user {username}, {invalid} expired keys.")
+    logger.info(f"Found {len(keys)} valid keys for user {username}, {invalid} expired keys, {blacklisted} blacklisted keys.")
 
     return templates.TemplateResponse(
         name=jinja_template,  # Name of your Jinja2 template file

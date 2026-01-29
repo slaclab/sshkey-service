@@ -5,3 +5,6 @@ loguru
 jinja2
 pendulum
 redis
+pytest
+pytest-asyncio
+httpx

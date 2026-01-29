@@ -1,0 +1,20 @@
+# SSH Key Fingerprint Blacklist
+#
+# This file contains a list of SSH key fingerprints that should be blocked
+# from authentication. Each fingerprint should be on its own line.
+#
+# Format: One fingerprint per line
+# - Lines starting with '#' are treated as comments and ignored
+# - Empty lines are ignored
+# - Whitespace is automatically stripped
+#
+# To reload the blacklist without restarting the service, send a SIGHUP signal:
+#   kill -HUP <pid>
+#   or
+#   pkill -HUP -f app.py
+#
+# Example fingerprints (these are base64-encoded fingerprints with '/' and '+' 
+# replaced by '.' and trailing '=' removed):
+#
+# SHA256:j9XM8aH7tLp2Nq5Rk3Wv4Yz6Cx8Bm1Df5Gn7Jt9Kp2Qs3
+# SHA256:aB3cD4eF5gH6iJ7kL8mN9oP0qR1sT2uV3wX4yZ5aB6cD7e

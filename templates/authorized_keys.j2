@@ -1,4 +1,9 @@
 {% for key in keys %}
-#from="{{ key['source_ip'] }}"
+# from="{{ key['source_ip'] }}"
+{% if key.get('is_blacklisted', False) %}
+# BLACKLISTED: This key has been blacklisted and cannot be used for authentication
+# {{ key['key_type'] }} {{ key['public_key'] }} {{ username }}@{{ key['finger_print'] }} # created_at {{ key['created_at'] }}, valid_until {{ key['valid_until'] }}{% if not no_expiry %}, expires_at {{ key['expires_at'] }}{% endif %}
+{% else %}
 {{ key['key_type'] }} {{ key['public_key'] }} {{ username }}@{{ key['finger_print'] }} # created_at {{ key['created_at'] }}, valid_until {{ key['valid_until'] }}{% if not no_expiry %}, expires_at {{ key['expires_at'] }}{% endif %}
+{% endif %}
 {% endfor %}
