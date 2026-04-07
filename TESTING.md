@@ -1,6 +1,278 @@
 # Testing Documentation
 
-This document describes how to run and understand the tests for the SSH Key Service, particularly the blacklist functionality.
+This document describes how to run and understand the tests for the SSH Key Service.
+
+## Prerequisites
+
+Make sure you have the development environment set up:
+
+```bash
+make dev
+```
+
+This will create a virtual environment and install all dependencies including:
+- pytest
+- pytest-asyncio
+- httpx (for TestClient)
+- All production dependencies
+
+## Running Tests
+
+### Run All Tests
+
+```bash
+make test
+```
+
+### Run Specific Test Files
+
+```bash
+# Admin logic tests (SLACSSH_ADMINS parsing, auth_okay behaviour)
+./sshkey-service/bin/pytest tests/test_admin_logic.py -v
+
+# Blacklist tests
+./sshkey-service/bin/pytest tests/test_blacklist.py -v
+```
+
+### Run Specific Test Classes
+
+```bash
+# Admin parsing unit tests
+./sshkey-service/bin/pytest tests/test_admin_logic.py::TestParseAdmins -v
+
+# Admin auth integration tests
+./sshkey-service/bin/pytest tests/test_admin_logic.py::TestAdminCheckInAuthOkay -v
+
+# Blacklist file loading tests
+./sshkey-service/bin/pytest tests/test_blacklist.py::TestBlacklistFileLoading -v
+
+# Blacklist authorized_keys integration tests
+./sshkey-service/bin/pytest tests/test_blacklist.py::TestBlacklistInAuthorizedKeys -v
+
+# Blacklist thread safety tests
+./sshkey-service/bin/pytest tests/test_blacklist.py::TestBlacklistThreadSafety -v
+```
+
+### Run with Coverage
+
+```bash
+make test-coverage
+```
+
+This generates an HTML coverage report in `htmlcov/index.html` and displays a terminal summary.
+
+### Watch Mode
+
+For development, you can run tests in watch mode (auto-rerun on file changes):
+
+```bash
+make test-watch
+```
+
+Note: You may need to install `pytest-watch` first:
+```bash
+./sshkey-service/bin/pip install pytest-watch
+```
+
+## Test Structure
+
+### Test Files
+
+| File | Coverage area |
+|------|--------------|
+| `tests/test_admin_logic.py` | `SLACSSH_ADMINS` parsing, `auth_okay()` admin checks |
+| `tests/test_blacklist.py` | Blacklist file loading, signal handling, endpoint protection |
+
+### Shared fixtures — `tests/conftest.py`
+
+`conftest.py` provides a `propagate_loguru` fixture (autouse) that forwards loguru log
+output to pytest's `caplog`, enabling `caplog.text` assertions in all test files.
+
+### Test Classes
+
+#### `tests/test_admin_logic.py`
+
+##### `TestParseAdmins`
+
+Unit tests for the `_parse_admins()` function (FR-1 through FR-7, AC-1 through AC-4).
+
+**Key tests:**
+- `test_valid_two_admins` — clean input produces correct frozenset, no warnings
+- `test_whitespace_normalisation` — leading/trailing spaces around commas are stripped
+- `test_empty_string_produces_empty_set_and_both_warnings` — both FR-4 and FR-5 warnings fire for `""`
+- `test_only_commas_produces_empty_set_and_both_warnings` — `","` also triggers both warnings
+- `test_empty_entry_in_middle_is_filtered_with_warning` — double-comma filtered with warning
+- `test_trailing_comma_warns` — trailing comma triggers empty-entry warning
+- `test_returns_frozenset` — return type is always `frozenset` (immutable)
+
+##### `TestAdminCheckInAuthOkay`
+
+Integration tests verifying `auth_okay()` uses the module-level `ADMINS` frozenset (AC-5 through AC-7).
+Uses `patch('app.ADMINS')` and `patch('app.auth')` to control inputs.
+
+**Key tests:**
+- `test_admin_user_passes_admin_only_endpoint` — known admin does not get 403 on admin-only route
+- `test_non_admin_blocked_from_admin_only_endpoint` — non-admin gets 403 on admin-only route
+- `test_user_can_access_own_resource_regardless_of_admins` — user accessing own resource never blocked
+- `test_admin_can_access_other_users_resource` — admin can access another user's non-admin endpoint
+
+#### `tests/test_blacklist.py`
+
+##### `TestBlacklistFileLoading`
+
+Tests the core functionality of loading and reloading the blacklist file.
+
+**Key tests:**
+- `test_reload_blacklist_with_valid_file`: Verifies basic file loading
+- `test_reload_blacklist_ignores_comments`: Ensures comment lines (starting with #) are ignored
+- `test_reload_blacklist_ignores_empty_lines`: Ensures empty lines don't cause issues
+- `test_reload_blacklist_nonexistent_file`: Handles missing files gracefully
+- `test_reload_blacklist_with_signal`: Tests SIGHUP signal handling
+- `test_reload_blacklist_replaces_old_data`: Verifies that reloading updates the blacklist
+
+##### `TestBlacklistInAuthorizedKeys`
+
+Tests the integration of blacklist checking in the `/authorized_keys` endpoint.
+
+**Key tests:**
+- `test_blacklisted_key_is_marked`: Verifies blacklisted keys are marked with `is_blacklisted=True`
+- `test_non_blacklisted_key_is_not_marked`: Verifies non-blacklisted keys are marked with `is_blacklisted=False`
+- `test_multiple_keys_some_blacklisted`: Tests handling of multiple keys with mixed blacklist status
+
+##### `TestBlacklistThreadSafety`
+
+Tests thread safety of the blacklist implementation.
+
+**Key tests:**
+- `test_blacklist_lock_is_used_during_reload`: Verifies proper lock usage
+- `test_concurrent_reads_during_reload`: Tests concurrent access patterns
+
+##### `TestBlacklistConfiguration`
+
+Tests configuration and environment variable handling.
+
+**Key tests:**
+- `test_default_blacklist_path`: Verifies default configuration
+- `test_custom_blacklist_path`: Tests custom path configuration
+
+##### `TestBlacklistLogging`
+
+Tests logging behavior for blacklist operations.
+
+**Key tests:**
+- `test_blacklisted_key_logs_warning`: Verifies appropriate warning logs are generated
+
+## Test Fixtures
+
+### `propagate_loguru` (autouse, `tests/conftest.py`)
+
+Forwards loguru output to pytest's `caplog` so log assertions work in all tests:
+
+```python
+def test_example(caplog):
+    _parse_admins("")
+    assert "no admin users configured" in caplog.text.lower()
+```
+
+### `temp_blacklist_file`
+
+Creates a temporary blacklist file for testing. Automatically cleaned up after each test.
+
+### `mock_redis`
+
+Provides a mocked Redis client with AsyncMock capabilities.
+
+### `sample_key_data`
+
+Provides sample SSH key data matching the production data structure.
+
+## Understanding Test Patterns
+
+### Mocking the admin set
+
+Use `patch('app.ADMINS')` to control admin membership in tests:
+
+```python
+with patch('app.ADMINS', frozenset({'superuser'})):
+    with patch('app.auth', return_value='regularuser'):
+        # auth_okay will see 'regularuser' not in {'superuser'} → 403
+```
+
+### Async Tests
+
+Tests that interact with async functions use the `@pytest.mark.asyncio` decorator:
+
+```python
+@pytest.mark.asyncio
+async def test_something(mock_redis):
+    result = await some_async_function(mock_redis)
+    assert result is not None
+```
+
+### Async generators for Redis scan_iter
+
+`scan_iter` requires an async generator, not a coroutine:
+
+```python
+async def empty_scan(*args, **kwargs):
+    return
+    yield  # makes it an async generator
+
+mock_redis.scan_iter = empty_scan
+```
+
+### Mocking file paths
+
+```python
+with patch('app.BLACKLIST_FILE', temp_blacklist_file):
+    reload_blacklist()
+```
+
+## Debugging Tests
+
+### Run with Debug Output
+
+```bash
+./sshkey-service/bin/pytest tests/test_admin_logic.py -v -s
+```
+
+The `-s` flag shows print statements and logging output.
+
+### Run with PDB on Failure
+
+```bash
+./sshkey-service/bin/pytest tests/test_admin_logic.py --pdb
+```
+
+### Run Only Failed Tests
+
+```bash
+./sshkey-service/bin/pytest tests/ --lf
+```
+
+## Coverage Goals
+
+| Area | Target |
+|------|--------|
+| `_parse_admins()` | 100% |
+| `auth_okay()` admin check paths | 100% |
+| Blacklist loading | 100% |
+| Signal handling | 100% |
+| Authorized keys integration | >90% |
+
+Check current coverage:
+
+```bash
+./sshkey-service/bin/pytest tests/test_admin_logic.py --cov=app --cov-report=term-missing
+```
+
+## Resources
+
+- [pytest Documentation](https://docs.pytest.org/)
+- [pytest-asyncio Documentation](https://pytest-asyncio.readthedocs.io/)
+- [FastAPI Testing](https://fastapi.tiangolo.com/tutorial/testing/)
+- [Python unittest.mock](https://docs.python.org/3/library/unittest.mock.html)
+- [loguru Documentation](https://loguru.readthedocs.io/)
 
 ## Prerequisites
 

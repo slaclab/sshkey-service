@@ -64,6 +64,36 @@ EMAIL_DOMAIN = os.environ.get('SLACSSH_EMAIL_DOMAIN', '@slac.stanford.edu')
 # Blacklist configuration
 BLACKLIST_FILE = os.environ.get('SLACSSH_BLACKLIST_FILE', '/etc/sshkey-service/blacklist.txt')
 
+# Admin configuration
+def _parse_admins(raw: str) -> frozenset:
+    """Parse and normalise the SLACSSH_ADMINS env var into an immutable set.
+
+    Strips whitespace from each entry, filters empty entries, and emits
+    startup warnings for misconfiguration. Called once at module load.
+
+    Note: matching is case-sensitive. UNIX usernames are conventionally
+    lowercase; if your identity provider sends mixed-case usernames, ensure
+    SLACSSH_ADMINS entries match exactly.
+    """
+    entries = [e.strip() for e in raw.split(',')]
+    valid = frozenset(e for e in entries if e)
+    empty_count = len(entries) - len(valid)
+    if empty_count:
+        logger.warning(
+            f"SLACSSH_ADMINS contains {empty_count} empty/whitespace "
+            f"entries (ignored). Check for trailing commas or extra spaces."
+        )
+    if not valid:
+        logger.warning(
+            "SLACSSH_ADMINS is empty — no admin users configured. "
+            "Admin-only endpoints will return 403 for all users."
+        )
+    else:
+        logger.info(f"ADMINS configured: {sorted(valid)}")
+    return valid
+
+ADMINS: frozenset = _parse_admins(os.getenv('SLACSSH_ADMINS', ''))
+
 # Global set to store blacklisted fingerprints
 blacklist_fingerprints = set()
 blacklist_lock = threading.Lock()
@@ -265,15 +295,14 @@ def auth_okay(admin_only: bool = False, user_header: str = USERNAME_HEADER_FIELD
                 raise HTTPException(status_code=500, detail="Internal error: request or username not found in function arguments.")
 
             # only allow user defined in the request, or if user is admin
-            admins = os.getenv('SLACSSH_ADMINS', '').split(',')
             found_username = auth(request, user_header)
 
             if not admin_only:
-                if found_username != username and found_username not in admins:
+                if found_username != username and found_username not in ADMINS:
                     logger.error(f"Unauthorized access attempt by user: {found_username}. Expected user: {username}.")
                     raise HTTPException(status_code=403, detail=f"Forbidden: User {found_username} is not allowed to access this resource.")
             else:
-                if found_username not in admins:
+                if found_username not in ADMINS:
                     logger.error(f"Unauthorized admin access attempt by user: {found_username}.")
                     raise HTTPException(status_code=403, detail=f"Forbidden: User {found_username} is not an admin.")
 

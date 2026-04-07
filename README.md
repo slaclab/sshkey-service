@@ -17,6 +17,25 @@ AuthorizedKeysCommandUser nobody
 ```
 to sshd_config
 
+## Configuration
+
+### Admin Users
+
+Set `SLACSSH_ADMINS` to a comma-separated list of usernames that should have admin privileges:
+
+```bash
+export SLACSSH_ADMINS=alice,bob,charlie
+```
+
+- Matching is **case-sensitive** — entries must match the username exactly as sent by the proxy
+- Whitespace around commas is stripped automatically (`"alice, bob"` → `{'alice', 'bob'}`)
+- Leave empty (or unset) to disable admin endpoints — all admin actions will return 403
+- A `WARNING` is logged at startup if the list is empty or contains malformed entries
+- An `INFO` log at startup confirms the parsed admin set for operator verification
+
+Admin endpoints (e.g. `DELETE /destroy/{username}/{finger_print}`) require admin access.
+All other endpoints are user-scoped (users can only access their own keys, admins can access any).
+
 ## Features
 
 - SSH key registration and management
