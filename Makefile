@@ -1,6 +1,6 @@
 ENVIRONMENT := sshkey-service
 CONTAINER_NAME := slaclab/sshkey-service
-VERSION := 0.1.0
+VERSION := 0.1.1
 TAG ?= $(VERSION)
 CONTAINER_RT := sudo podman
 DOCKERHUB_USERNAME := slaclab
