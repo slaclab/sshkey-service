@@ -8,6 +8,8 @@ from typing import Optional
 import os
 import io
 import binascii
+import re
+import struct
 from loguru import logger
 
 from fastapi.responses import PlainTextResponse, HTMLResponse, JSONResponse, RedirectResponse
@@ -93,6 +95,31 @@ def _parse_admins(raw: str) -> frozenset:
     return valid
 
 ADMINS: frozenset = _parse_admins(os.getenv('SLACSSH_ADMINS', ''))
+
+# RFC 4716 §3.3: header lines are "Tag: value"; tags start with a letter and
+# may contain letters, digits, and hyphens.
+_RFC4716_HEADER_RE = re.compile(r'^[A-Za-z][A-Za-z0-9-]*:')
+
+
+def _key_type_from_wire(data: bytes) -> str:
+    """Extract the key type string from OpenSSH wire-format public key data.
+
+    The OpenSSH wire format (RFC 4253 §6.6) begins with a 4-byte big-endian
+    length followed by the key type string (e.g. b'ssh-ed25519', b'ssh-rsa').
+    This is the authoritative source of key type — not the RFC 4716 Comment field.
+
+    Raises ValueError on malformed data (too short, length overflow, unreasonable length).
+    """
+    if len(data) < 4:
+        raise ValueError(f"Key data too short: {len(data)} bytes")
+    (type_len,) = struct.unpack('>I', data[:4])
+    if type_len > 256:
+        raise ValueError(f"Key type length {type_len} exceeds sanity limit of 256 bytes")
+    if type_len > len(data) - 4:
+        raise ValueError(
+            f"Key type length {type_len} overflows data length {len(data) - 4}"
+        )
+    return data[4:4 + type_len].decode('ascii')
 
 # Global set to store blacklisted fingerprints
 blacklist_fingerprints = set()
@@ -405,8 +432,8 @@ async def upload_user_public_key( request: Request, username: str, public_key: P
         # AAAAC3NzaC1lZDI1NTE5AAAAIGs4y2orDiyCSpY/12Psser9E+q9GzF7133Wu4wBtCqE
         #---- END SSH2 PUBLIC KEY ----
         in_key_block = False
+        in_header = False
         key_data_base64 = ""
-        key_type = None
         for line in public_key.public_key.splitlines():
             if line.strip() == "---- BEGIN SSH2 PUBLIC KEY ----":
                 in_key_block = True
@@ -415,26 +442,31 @@ async def upload_user_public_key( request: Request, username: str, public_key: P
                 break
 
             if in_key_block:
-                if line.strip().startswith("Comment:"):
-                    # Extract key type from comment
-                    comment = line.strip().split(':', 1)[1].strip()
-                    if "ED25519" in comment:
-                        key_type = "ssh-ed25519"
-                    elif "RSA" in comment:
-                        key_type = "ssh-rsa"
-                    # Add other key types as needed
+                # RFC 4716 §3.3: headers are "Tag: value" lines; continuation
+                # lines end with '\'. Skip all header lines (Comment, Subject, x-*).
+                if in_header:
+                    # Still in a multi-line header continuation
+                    in_header = line.rstrip().endswith('\\')
                     continue
-                else:
-                    key_data_base64 += line.strip()
+                if _RFC4716_HEADER_RE.match(line.strip()):
+                    in_header = line.rstrip().endswith('\\')
+                    continue
+                key_data_base64 += line.strip()
 
         # error out if not valid
-        if not key_data_base64 or not key_type:
+        if not key_data_base64:
             raise HTTPException(status_code=400, detail="Invalid public key format. Please ensure it is in the correct format.")
 
         found = None
         try:
-            found = paramiko.PKey.from_type_string(key_type, base64.b64decode(key_data_base64))
+            raw = base64.b64decode(key_data_base64)
+            wire_type = _key_type_from_wire(raw)
+            found = paramiko.PKey.from_type_string(wire_type, raw)
+        except ValueError as e:
+            logger.debug(f"Key parse ValueError: {e}")
+            raise HTTPException(status_code=400, detail="Could not parse the public key. Please ensure it is in the correct format.")
         except Exception as e:
+            logger.debug(f"Key parse error: {e}")
             raise HTTPException(status_code=400, detail="Could not parse the public key. Please ensure it is in the correct format.")
 
         # remove trailing '=' and replace '/' with '.' since we can't have filenames with '/' in them
