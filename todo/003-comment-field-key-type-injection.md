@@ -1,6 +1,6 @@
 # 003 — Comment-Field Key Type Injection
 
-**Status:** ⬜ Open
+**Status:** 🔎 In Review
 **Severity:** HIGH
 **Category:** Parsing
 
@@ -125,11 +125,13 @@ def _key_type_from_wire(data: bytes) -> str:
     the key type string (e.g. b'ssh-ed25519', b'ssh-rsa'). This is the
     authoritative source of key type — not the RFC 4716 Comment: field.
 
-    Raises ValueError on malformed data (too short, length overflow).
+    Raises ValueError on malformed data (too short, length overflow, unreasonable length).
     """
     if len(data) < 4:
         raise ValueError(f"Key data too short: {len(data)} bytes")
     (type_len,) = struct.unpack('>I', data[:4])
+    if type_len > 256:
+        raise ValueError(f"Key type length {type_len} exceeds sanity limit of 256 bytes")
     if type_len > len(data) - 4:
         raise ValueError(
             f"Key type length {type_len} overflows data length {len(data) - 4}"
@@ -140,7 +142,11 @@ def _key_type_from_wire(data: bytes) -> str:
 **Updated `determine_public_key` inner function:**
 
 ```python
+import re
+_RFC4716_HEADER_RE = re.compile(r'^[A-Za-z][A-Za-z0-9-]*:')
+
 in_key_block = False
+in_header = False
 key_data_base64 = ""
 for line in public_key.public_key.splitlines():
     if line.strip() == "---- BEGIN SSH2 PUBLIC KEY ----":
@@ -149,10 +155,16 @@ for line in public_key.public_key.splitlines():
     elif line.strip() == "---- END SSH2 PUBLIC KEY ----":
         break
     if in_key_block:
-        if line.strip().startswith("Comment:"):
-            continue            # comment is metadata only — ignored for dispatch
-        else:
-            key_data_base64 += line.strip()
+        # RFC 4716 §3.3: headers are "Tag: value" lines; continuation
+        # lines end with '\'. Skip all header lines (Comment, Subject, x-*).
+        if in_header:
+            # Still in a multi-line header continuation
+            in_header = line.rstrip().endswith('\\')
+            continue
+        if _RFC4716_HEADER_RE.match(line.strip()):
+            in_header = line.rstrip().endswith('\\')
+            continue
+        key_data_base64 += line.strip()
 
 if not key_data_base64:
     raise HTTPException(status_code=400,
@@ -163,9 +175,11 @@ try:
     wire_type = _key_type_from_wire(raw)
     found = paramiko.PKey.from_type_string(wire_type, raw)
 except ValueError as e:
+    logger.debug(f"Key parse ValueError: {e}")
     raise HTTPException(status_code=400,
         detail="Could not parse the public key. Please ensure it is in the correct format.")
 except Exception as e:
+    logger.debug(f"Key parse error: {e}")
     raise HTTPException(status_code=400,
         detail="Could not parse the public key. Please ensure it is in the correct format.")
 ```
@@ -271,16 +285,20 @@ Choice: Collapse ValueError + Exception into single except vs. separate handling
 
 **Files:** `app.py` only
 
-- Add `import struct` to imports
+- Add `import struct` and `import re` to imports
+- Add `_RFC4716_HEADER_RE = re.compile(r'^[A-Za-z][A-Za-z0-9-]*:')` module-level constant
 - Add `_key_type_from_wire(data: bytes) -> str` module-level helper (alongside `_parse_admins`)
+  - Include `type_len > 256` sanity cap (ER-003 amendment)
 - Update `determine_public_key`:
   - Remove `key_type = None` variable
   - Remove `Comment:` → `key_type` dispatch block
+  - Replace with general RFC 4716 header skipping using `_RFC4716_HEADER_RE` and `in_header` continuation tracking (ER-003 amendment)
   - Change `if not key_data_base64 or not key_type:` → `if not key_data_base64:`
   - Add `raw = base64.b64decode(key_data_base64)`
   - Add `wire_type = _key_type_from_wire(raw)`
   - Change `paramiko.PKey.from_type_string(key_type, ...)` → `paramiko.PKey.from_type_string(wire_type, raw)`
   - Split exception handling to catch `ValueError` separately
+  - Add `logger.debug()` before re-raising HTTPException in both catch blocks (ER-003 amendment)
 
 **Verification:** `grep -n "key_type" app.py` should show zero occurrences inside `determine_public_key`
 
@@ -296,7 +314,14 @@ TestKeyTypeFromWire (unit — no paramiko needed):
   - test_rsa_wire_type_extracted_correctly
   - test_too_short_raises_value_error
   - test_type_len_overflow_raises_value_error
+  - test_type_len_exceeds_sanity_limit_raises_value_error      ← ER-003 amendment
   - test_unknown_but_valid_format_returns_string
+
+TestRfc4716HeaderParsing (unit — parsing loop only):           ← ER-003 amendment
+  - test_multiline_comment_continuation_skipped
+  - test_subject_header_skipped
+  - test_custom_x_header_skipped
+  - test_multiline_header_with_backslash_continuation
 
 TestDeterminePublicKey (integration — uses real paramiko):
   - test_rsa_key_with_ed25519_comment_parsed_as_rsa  (AC-1)
@@ -305,6 +330,11 @@ TestDeterminePublicKey (integration — uses real paramiko):
   - test_key_with_no_comment_uploads_successfully  (AC-7)
   - test_truncated_base64_returns_400  (AC-4)
   - test_malformed_wire_returns_400  (AC-5, AC-6)
+  - test_invalid_base64_characters_returns_400                  ← ER-003 amendment
+
+Note: generate test keys at test time via paramiko.Ed25519Key.generate() /
+paramiko.RSAKey.generate(2048), extract .get_base64(), and wrap in RFC 4716
+format with injected Comment headers. Do not commit private key material.
 ```
 
 ---
@@ -323,12 +353,20 @@ TestDeterminePublicKey (integration — uses real paramiko):
 
 ## Definition of Done
 
-- [ ] `import struct` added to app.py
+- [ ] `import struct` and `import re` added to app.py
+- [ ] `_RFC4716_HEADER_RE` compiled regex added module-level (ER-003 amendment)
 - [ ] `_key_type_from_wire(data: bytes) -> str` implemented and module-level
+- [ ] `_key_type_from_wire` includes `type_len > 256` sanity cap (ER-003 amendment)
 - [ ] `determine_public_key` no longer references `key_type` variable
-- [ ] `Comment:` field parsing removed from key type dispatch (may still skip line)
+- [ ] All RFC 4716 headers (Comment, Subject, x-*) skipped via regex, not just Comment (ER-003 amendment)
+- [ ] Multi-line header continuations (backslash) handled correctly (ER-003 amendment)
+- [ ] `logger.debug()` called before re-raising HTTPException in catch blocks (ER-003 amendment)
 - [ ] `grep -n "key_type" app.py` shows zero occurrences inside `determine_public_key`
 - [ ] `tests/test_key_parsing.py` created — all injection AC tests passing
 - [ ] `tests/test_key_parsing.py` — all wire-format unit tests passing
+- [ ] `tests/test_key_parsing.py` — RFC 4716 header parsing tests passing (ER-003 amendment)
+- [ ] `tests/test_key_parsing.py` — invalid base64 characters test passing (ER-003 amendment)
 - [ ] Existing valid key uploads unaffected (regression tests pass)
 - [ ] Error messages for malformed keys remain clear (no internal detail leaked)
+- [ ] TESTING.md updated: test file table, run-specific test-file and per-class examples, Test Classes section (TestKeyTypeFromWire, TestRfc4716HeaderParsing, TestDeterminePublicKey), Test Fixtures section (new SSH2 key block fixtures), and coverage goals include `tests/test_key_parsing.py`
+- [ ] README.md updated: test coverage table includes `tests/test_key_parsing.py`
