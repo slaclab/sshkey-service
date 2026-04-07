@@ -121,6 +121,33 @@ def _key_type_from_wire(data: bytes) -> str:
         )
     return data[4:4 + type_len].decode('ascii')
 
+# SHA256: prefix + exactly 43 chars from the post-cleaning alphabet [A-Za-z0-9.]
+# 43 = ceil(32 * 4/3) with padding stripped — holds for ALL key types (RSA, Ed25519,
+# ECDSA) because SHA256 always produces 32 bytes regardless of key type.
+# Anchored with both ^ and $ (equivalent to re.fullmatch) so trailing garbage is rejected
+# even if $ is accidentally removed from one side.
+_FINGERPRINT_RE = re.compile(r'^SHA256:[A-Za-z0-9.]{43}$')
+
+
+def validate_fingerprint(fp: str) -> str:
+    """Validate a fingerprint against the SHA256 allowlist regex.
+
+    Accepted format: SHA256:[A-Za-z0-9.]{43}  (post-cleaning — '/' and '+' replaced with '.')
+
+    Raises HTTPException(400) if the fingerprint does not match.
+    Returns the fingerprint unchanged if valid.
+
+    IMPORTANT: Call this before any logger.info() that would log the raw
+    fingerprint value, to prevent log injection from hostile internal callers.
+    """
+    if not _FINGERPRINT_RE.match(fp):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid fingerprint format. Expected SHA256 fingerprint."
+        )
+    return fp
+
+
 # Global set to store blacklisted fingerprints
 blacklist_fingerprints = set()
 blacklist_lock = threading.Lock()
@@ -471,6 +498,7 @@ async def upload_user_public_key( request: Request, username: str, public_key: P
 
         # remove trailing '=' and replace '/' with '.' since we can't have filenames with '/' in them
         finger_print = found.fingerprint.rstrip('=').replace('/','.').replace('+','.')
+        finger_print = validate_fingerprint(finger_print)
 
         logger.info(f"Found public key {finger_print}: {found}")
         return finger_print, found
@@ -604,7 +632,11 @@ async def get_authorized_keys( request: Request, username: str, jinja_template: 
 async def destroy_user_keypair( request: Request, username: str, finger_print: str, redis: aioredis.Redis = Depends(get_redis_client), found_username: str = None):
     """
     Destroy the SSH key pair for the given username and fingerprint.
+
+    Accepted fingerprint format: SHA256:[A-Za-z0-9.]{43} (cleaned, no '/' or '+').
+    Returns HTTP 400 if the fingerprint does not match that format.
     """
+    validate_fingerprint(finger_print)
     logger.info(f"Destroying SSH key pair for user: {username} with fingerprint: {finger_print}")
 
     # TODO: probably better to have a field in the hash to indicate it's invalid/expired to prevent key reuse
@@ -619,7 +651,11 @@ async def destroy_user_keypair( request: Request, username: str, finger_print: s
 async def inactivate_user_keypair( request: Request, username: str, finger_print: str, redis: aioredis.Redis = Depends(get_redis_client), found_username: str = None):
     """
     Invalidate the SSH key pair for the given username and fingerprint.
+
+    Accepted fingerprint format: SHA256:[A-Za-z0-9.]{43} (cleaned, no '/' or '+').
+    Returns HTTP 400 if the fingerprint does not match that format.
     """
+    validate_fingerprint(finger_print)
     logger.info(f"Invalidate SSH key pair for user: {username} with fingerprint: {finger_print}")
 
     # Check if the fingerprint is blacklisted
@@ -652,7 +688,11 @@ async def inactivate_user_keypair( request: Request, username: str, finger_print
 async def refresh_user_keypair( request: Request, username: str, finger_print: str, extend_seconds: int = VALIDITY_PERIOD, expires_seconds: int = 604800, redis: aioredis.Redis = Depends(get_redis_client), found_username: str = None):
     """
     Refresh the SSH key pair for the given username and fingerprint.
+
+    Accepted fingerprint format: SHA256:[A-Za-z0-9.]{43} (cleaned, no '/' or '+').
+    Returns HTTP 400 if the fingerprint does not match that format.
     """
+    validate_fingerprint(finger_print)
     logger.info(f"Refreshing SSH key pair for user: {username} with fingerprint: {finger_print}")
 
     # Check if the fingerprint is blacklisted
@@ -723,7 +763,11 @@ async def refresh_user_keypair( request: Request, username: str, finger_print: s
 async def update_user_notes( request: Request, username: str, finger_print: str, user_notes: UserNotes, redis: aioredis.Redis = Depends(get_redis_client), found_username: str = None):
     """
     Update the user notes for the SSH key pair for the given username and fingerprint.
+
+    Accepted fingerprint format: SHA256:[A-Za-z0-9.]{43} (cleaned, no '/' or '+').
+    Returns HTTP 400 if the fingerprint does not match that format.
     """
+    validate_fingerprint(finger_print)
     logger.info(f"Updating user notes for SSH key pair for user: {username} with fingerprint: {finger_print}")
 
     # Check if the fingerprint is blacklisted
