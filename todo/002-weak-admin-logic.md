@@ -1,6 +1,7 @@
 # 002 — Weak Admin Logic
 
-**Status:** 🔍 Reviewed  
+**Status:** ✅ Done  
+**Shipped:** 2026-04-07  
 **Severity:** HIGH  
 **Category:** Auth
 
@@ -440,17 +441,17 @@ SLACSSH_ADMINS=
 
 ## Definition of Done
 
-- [ ] `_parse_admins()` function added to app.py with strip + filter + warning logic
-- [ ] `ADMINS: frozenset` module-level constant replaces per-request `os.getenv` call
-- [ ] `auth_okay` decorator references `ADMINS` only — `os.getenv('SLACSSH_ADMINS')` no longer appears in app.py
-- [ ] `tests/conftest.py` created with loguru → caplog propagation fixture *(added by eng review round 1)*
-- [ ] `tests/test_admin_logic.py` created with all 8 unit tests for `_parse_admins` passing
-- [ ] Integration tests for admin check in `auth_okay` (patch `app.ADMINS`) passing
-- [ ] Startup WARNING verified in logs when `SLACSSH_ADMINS` is empty
-- [ ] `.env.example` updated with whitespace-handling note
-- [ ] `README.md` updated with `SLACSSH_ADMINS` configuration documentation (env var format, whitespace handling, empty-list behaviour)
-- [ ] `TESTING.md` updated to list `tests/test_admin_logic.py` test classes (`TestParseAdmins`, `TestAdminCheckInAuthOkay`)
-- [ ] `grep -n "os.getenv.*SLACSSH_ADMINS" app.py` returns zero results
+- [x] `_parse_admins()` function added to app.py with strip + filter + warning logic
+- [x] `ADMINS: frozenset` module-level constant replaces per-request `os.getenv` call
+- [x] `auth_okay` decorator references `ADMINS` only — `os.getenv('SLACSSH_ADMINS')` no longer appears in app.py
+- [x] `tests/conftest.py` created with loguru → caplog propagation fixture *(added by eng review round 1)*
+- [x] `tests/test_admin_logic.py` created with all 8 unit tests for `_parse_admins` passing
+- [x] Integration tests for admin check in `auth_okay` (patch `app.ADMINS`) passing
+- [x] Startup WARNING verified in logs when `SLACSSH_ADMINS` is empty
+- [x] `.env.example` updated with whitespace-handling note
+- [x] `README.md` updated with `SLACSSH_ADMINS` configuration documentation (env var format, whitespace handling, empty-list behaviour)
+- [x] `TESTING.md` updated to list `tests/test_admin_logic.py` test classes (`TestParseAdmins`, `TestAdminCheckInAuthOkay`)
+- [x] `grep -n "os.getenv.*SLACSSH_ADMINS" app.py` returns zero results
 
 ---
 

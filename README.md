@@ -45,7 +45,7 @@ All other endpoints are user-scoped (users can only access their own keys, admin
 - REST API and web interface
 - Blacklist support for blocking compromised SSH key fingerprints
 
-# Testing
+# Quick Start
 
 basic data store at present. do not use the keys generated from this in anything put a development environment!
 
@@ -112,7 +112,7 @@ This helps users track their registered keys and provides a security notificatio
 
 # Testing
 
-The service includes comprehensive unit tests for all functionality, especially the blacklist feature.
+The service includes comprehensive unit tests for all functionality.
 
 ## Running Tests
 
@@ -129,13 +129,10 @@ make test-coverage
 
 ## Test Coverage
 
-The test suite (`test_blacklist.py`) includes:
-
-- **Blacklist file loading** - Tests for parsing, comments, empty lines, and file errors
-- **Signal handling** - Tests for SIGHUP reload functionality
-- **Authorized keys integration** - Tests for blacklist checking in the API
-- **Thread safety** - Tests for concurrent access to blacklist data
-- **Logging** - Tests for appropriate log messages
+| Test file | Coverage area |
+|-----------|--------------|
+| `tests/test_admin_logic.py` | `SLACSSH_ADMINS` parsing, `auth_okay()` admin checks |
+| `tests/test_blacklist.py` | Blacklist file loading, signal handling, endpoint protection |
 
 See [TESTING.md](TESTING.md) for detailed testing documentation.
 
