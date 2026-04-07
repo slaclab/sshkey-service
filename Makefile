@@ -1,6 +1,7 @@
 ENVIRONMENT := sshkey-service
 CONTAINER_NAME := slaclab/sshkey-service
-TAG ?= latest
+VERSION := 0.1.0
+TAG ?= $(VERSION)
 CONTAINER_RT := sudo podman
 DOCKERHUB_USERNAME := slaclab
 CONTAINER_PREFIX := docker.io
@@ -21,10 +22,11 @@ dockerhub-login:
 	$(CONTAINER_RT) login --username $(DOCKERHUB_USERNAME) $(CONTAINER_PREFIX)/$(CONTAINER_NAME)
 
 build:
-	$(CONTAINER_RT) build -t $(CONTAINER_PREFIX)/$(CONTAINER_NAME):$(TAG) .
+	$(CONTAINER_RT) build -t $(CONTAINER_PREFIX)/$(CONTAINER_NAME):$(TAG) -t $(CONTAINER_PREFIX)/$(CONTAINER_NAME):latest .
 
 push:
 	$(CONTAINER_RT) push $(CONTAINER_PREFIX)/$(CONTAINER_NAME):$(TAG)
+	$(CONTAINER_RT) push $(CONTAINER_PREFIX)/$(CONTAINER_NAME):latest
 
 # Testing
 test:
