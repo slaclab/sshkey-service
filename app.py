@@ -411,7 +411,8 @@ async def list_user_keypair(
       )
 
     else:
-      return JSONResponse( content={"message": keys}, status_code=status.HTTP_201_CREATED )
+      serializable_keys = [convert_key_bundle_to_iso(k) for k in keys]
+      return JSONResponse( content={"message": serializable_keys}, status_code=status.HTTP_201_CREATED )
 
 
 @app.get("/register/{username}")

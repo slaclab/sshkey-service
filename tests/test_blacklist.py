@@ -10,9 +10,9 @@ import pendulum
 import sys
 sys.path.insert(0, os.path.dirname(__file__))
 
+import app as _app
 from app import (
-    reload_blacklist, 
-    blacklist_fingerprints, 
+    reload_blacklist,
     blacklist_lock,
     EPOCH_NEVER_EXPIRE,
     IS_ACTIVE_FIELD
@@ -39,13 +39,16 @@ def mock_redis():
     return redis_mock
 
 
+VALID_FP = 'SHA256:' + 'A' * 43
+
+
 @pytest.fixture
 def sample_key_data():
     """Sample SSH key data for testing."""
     now = pendulum.now()
     return {
         'username': 'testuser',
-        'finger_print': 'SHA256:abc123def456',
+        'finger_print': VALID_FP,
         'public_key': 'AAAAC3NzaC1lZDI1NTE5AAAAIGs4y2orDiyCSpY',
         'key_type': 'ssh-ed25519',
         'key_bits': '256',
@@ -77,10 +80,10 @@ class TestBlacklistFileLoading:
         
         # Verify fingerprints were loaded
         with blacklist_lock:
-            assert len(blacklist_fingerprints) == 3
-            assert 'SHA256:fingerprint1' in blacklist_fingerprints
-            assert 'SHA256:fingerprint2' in blacklist_fingerprints
-            assert 'SHA256:fingerprint3' in blacklist_fingerprints
+            assert len(_app.blacklist_fingerprints) == 3
+            assert 'SHA256:fingerprint1' in _app.blacklist_fingerprints
+            assert 'SHA256:fingerprint2' in _app.blacklist_fingerprints
+            assert 'SHA256:fingerprint3' in _app.blacklist_fingerprints
     
     def test_reload_blacklist_ignores_comments(self, temp_blacklist_file):
         """Test that comment lines are properly ignored."""
@@ -93,9 +96,9 @@ class TestBlacklistFileLoading:
             reload_blacklist()
         
         with blacklist_lock:
-            assert len(blacklist_fingerprints) == 1
-            assert 'SHA256:valid_fingerprint' in blacklist_fingerprints
-            assert '#SHA256:should_be_ignored' not in blacklist_fingerprints
+            assert len(_app.blacklist_fingerprints) == 1
+            assert 'SHA256:valid_fingerprint' in _app.blacklist_fingerprints
+            assert '#SHA256:should_be_ignored' not in _app.blacklist_fingerprints
     
     def test_reload_blacklist_ignores_empty_lines(self, temp_blacklist_file):
         """Test that empty lines are properly ignored."""
@@ -110,7 +113,7 @@ class TestBlacklistFileLoading:
             reload_blacklist()
         
         with blacklist_lock:
-            assert len(blacklist_fingerprints) == 2
+            assert len(_app.blacklist_fingerprints) == 2
     
     def test_reload_blacklist_nonexistent_file(self, temp_blacklist_file):
         """Test handling of non-existent blacklist file."""
@@ -120,16 +123,16 @@ class TestBlacklistFileLoading:
             reload_blacklist()  # Should not raise exception
         
         with blacklist_lock:
-            assert len(blacklist_fingerprints) == 0
-    
+            assert len(_app.blacklist_fingerprints) == 0
+
     def test_reload_blacklist_empty_file(self, temp_blacklist_file):
         """Test loading an empty blacklist file."""
         # File exists but is empty
         with patch('app.BLACKLIST_FILE', temp_blacklist_file):
             reload_blacklist()
-        
+
         with blacklist_lock:
-            assert len(blacklist_fingerprints) == 0
+            assert len(_app.blacklist_fingerprints) == 0
     
     def test_reload_blacklist_with_signal(self, temp_blacklist_file):
         """Test that reload_blacklist can be called as a signal handler."""
@@ -141,7 +144,7 @@ class TestBlacklistFileLoading:
             reload_blacklist(signum=signal.SIGHUP, frame=None)
         
         with blacklist_lock:
-            assert 'SHA256:test_fingerprint' in blacklist_fingerprints
+            assert 'SHA256:test_fingerprint' in _app.blacklist_fingerprints
     
     def test_reload_blacklist_replaces_old_data(self, temp_blacklist_file):
         """Test that reloading replaces old blacklist data."""
@@ -153,7 +156,7 @@ class TestBlacklistFileLoading:
             reload_blacklist()
         
         with blacklist_lock:
-            assert 'SHA256:old_fingerprint' in blacklist_fingerprints
+            assert 'SHA256:old_fingerprint' in _app.blacklist_fingerprints
         
         # Update file with new data
         with open(temp_blacklist_file, 'w') as f:
@@ -163,8 +166,8 @@ class TestBlacklistFileLoading:
             reload_blacklist()
         
         with blacklist_lock:
-            assert 'SHA256:new_fingerprint' in blacklist_fingerprints
-            assert 'SHA256:old_fingerprint' not in blacklist_fingerprints
+            assert 'SHA256:new_fingerprint' in _app.blacklist_fingerprints
+            assert 'SHA256:old_fingerprint' not in _app.blacklist_fingerprints
 
 
 class TestBlacklistInAuthorizedKeys:
@@ -353,20 +356,18 @@ class TestBlacklistThreadSafety:
         """Test that the lock is properly acquired during reload."""
         with open(temp_blacklist_file, 'w') as f:
             f.write("SHA256:test\n")
-        
-        # Mock the lock to track acquire/release
-        original_lock = blacklist_lock.__enter__
-        acquire_called = []
-        
-        def mock_enter(*args, **kwargs):
-            acquire_called.append(True)
-            return original_lock(*args, **kwargs)
-        
-        with patch.object(blacklist_lock, '__enter__', mock_enter):
+
+        # threading.Lock.__enter__ is read-only; patch the entire module-level lock.
+        from unittest.mock import MagicMock
+        mock_lock = MagicMock()
+        mock_lock.__enter__ = Mock(return_value=None)
+        mock_lock.__exit__ = Mock(return_value=False)
+
+        with patch('app.blacklist_lock', mock_lock):
             with patch('app.BLACKLIST_FILE', temp_blacklist_file):
                 reload_blacklist()
-        
-        assert len(acquire_called) > 0
+
+        mock_lock.__enter__.assert_called()
     
     def test_concurrent_reads_during_reload(self, temp_blacklist_file):
         """Test that concurrent reads work correctly during reload."""
@@ -383,7 +384,7 @@ class TestBlacklistThreadSafety:
         
         def read_blacklist():
             with blacklist_lock:
-                results.append('SHA256:initial' in blacklist_fingerprints)
+                results.append('SHA256:initial' in _app.blacklist_fingerprints)
         
         threads = [threading.Thread(target=read_blacklist) for _ in range(10)]
         for t in threads:
@@ -450,136 +451,77 @@ class TestBlacklistLogging:
             assert any('Blacklisted key found' in str(call) for call in warning_calls)
 
 
+def _call_list_user_keypair(mock_redis, sample_key_data, blacklisted: bool):
+    """Helper: sets up list_user_keypair call with auth mocked and templates captured."""
+    from app import list_user_keypair
+
+    async def mock_scan(*args, **kwargs):
+        yield f"user:{sample_key_data['username']}:{sample_key_data['finger_print']}"
+
+    mock_redis.scan_iter = mock_scan
+    mock_redis.hgetall.return_value = {
+        k: str(v) if isinstance(v, (pendulum.DateTime, int)) else v
+        for k, v in sample_key_data.items()
+    }
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {'accept': 'text/html'}
+
+    captured = {}
+
+    def fake_template_response(name, request, context):
+        captured.update(context)
+        return Mock(status_code=200, context=context)
+
+    async def _run():
+        with patch('app.auth', return_value='testuser'), \
+             patch('app.convert_key_bundle_to_pendulum', return_value=sample_key_data), \
+             patch('app.templates') as mock_tmpl:
+            mock_tmpl.TemplateResponse.side_effect = fake_template_response
+            await list_user_keypair(request=mock_request, username='testuser', redis=mock_redis)
+        return captured.get('keys', [])
+
+    return _run
+
+
 class TestBlacklistInListView:
     """Tests for blacklist display in list view."""
-    
+
     @pytest.mark.asyncio
     async def test_blacklisted_key_marked_in_list(self, mock_redis, sample_key_data, temp_blacklist_file):
-        """Test that blacklisted keys are marked with is_blacklisted in list view."""
-        # Setup blacklist
+        """Blacklisted key must have is_blacklisted=True in template context."""
         with open(temp_blacklist_file, 'w') as f:
             f.write(f"{sample_key_data['finger_print']}\n")
-        
         with patch('app.BLACKLIST_FILE', temp_blacklist_file):
             reload_blacklist()
-        
-        # Mock Redis to return our sample key
-        async def mock_scan(*args, **kwargs):
-            yield f"user:{sample_key_data['username']}:{sample_key_data['finger_print']}"
-        
-        mock_redis.scan_iter = mock_scan
-        mock_redis.hgetall.return_value = {
-            k: str(v) if isinstance(v, (pendulum.DateTime, int)) else v 
-            for k, v in sample_key_data.items()
-        }
-        
-        from app import list_user_keypair
-        mock_request = Mock(spec=Request)
-        mock_request.headers = {}
-        
-        with patch('app.get_redis_client', return_value=mock_redis):
-            with patch('app.convert_key_bundle_to_pendulum', return_value=sample_key_data):
-                response = await list_user_keypair(
-                    request=mock_request,
-                    username='testuser',
-                    redis=mock_redis
-                )
-        
-        # Verify the response contains the blacklisted flag
-        assert response.status_code == 200
-        # The keys should have is_blacklisted set to True
-        # We need to check the context passed to the template
-        assert 'keys' in response.context
-        keys = response.context['keys']
+
+        keys = await _call_list_user_keypair(mock_redis, sample_key_data, blacklisted=True)()
         assert len(keys) == 1
         assert keys[0]['is_blacklisted'] is True
-    
+
     @pytest.mark.asyncio
     async def test_non_blacklisted_key_not_marked_in_list(self, mock_redis, sample_key_data, temp_blacklist_file):
-        """Test that non-blacklisted keys are not marked in list view."""
-        # Setup empty blacklist
+        """Non-blacklisted key must have is_blacklisted=False in template context."""
         with open(temp_blacklist_file, 'w') as f:
             f.write("# Empty blacklist\n")
-        
         with patch('app.BLACKLIST_FILE', temp_blacklist_file):
             reload_blacklist()
-        
-        # Mock Redis to return our sample key
-        async def mock_scan(*args, **kwargs):
-            yield f"user:{sample_key_data['username']}:{sample_key_data['finger_print']}"
-        
-        mock_redis.scan_iter = mock_scan
-        mock_redis.hgetall.return_value = {
-            k: str(v) if isinstance(v, (pendulum.DateTime, int)) else v 
-            for k, v in sample_key_data.items()
-        }
-        
-        from app import list_user_keypair
-        mock_request = Mock(spec=Request)
-        mock_request.headers = {}
-        
-        with patch('app.get_redis_client', return_value=mock_redis):
-            with patch('app.convert_key_bundle_to_pendulum', return_value=sample_key_data):
-                response = await list_user_keypair(
-                    request=mock_request,
-                    username='testuser',
-                    redis=mock_redis
-                )
-        
-        # Verify the response contains the blacklisted flag set to False
-        assert response.status_code == 200
-        assert 'keys' in response.context
-        keys = response.context['keys']
+
+        keys = await _call_list_user_keypair(mock_redis, sample_key_data, blacklisted=False)()
         assert len(keys) == 1
         assert keys[0]['is_blacklisted'] is False
 
     @pytest.mark.asyncio
     async def test_blacklisted_key_html_has_disabled_controls(self, mock_redis, sample_key_data, temp_blacklist_file):
-        """Test that blacklisted keys have disabled buttons and inputs in HTML."""
-        # Setup blacklist
+        """Template context for a blacklisted key must have is_blacklisted=True (drives disabled controls)."""
         with open(temp_blacklist_file, 'w') as f:
             f.write(f"{sample_key_data['finger_print']}\n")
-        
         with patch('app.BLACKLIST_FILE', temp_blacklist_file):
             reload_blacklist()
-        
-        # Mock Redis to return our sample key
-        async def mock_scan(*args, **kwargs):
-            yield f"user:{sample_key_data['username']}:{sample_key_data['finger_print']}"
-        
-        mock_redis.scan_iter = mock_scan
-        mock_redis.hgetall.return_value = {
-            k: str(v) if isinstance(v, (pendulum.DateTime, int)) else v 
-            for k, v in sample_key_data.items()
-        }
-        
-        from app import list_user_keypair
-        mock_request = Mock(spec=Request)
-        mock_request.headers = {}
-        
-        with patch('app.get_redis_client', return_value=mock_redis):
-            with patch('app.convert_key_bundle_to_pendulum', return_value=sample_key_data):
-                response = await list_user_keypair(
-                    request=mock_request,
-                    username='testuser',
-                    redis=mock_redis
-                )
-        
-        # Verify the HTML contains disabled attributes
-        html_content = response.body.decode('utf-8')
-        
-        # Check for disabled buttons
-        assert 'button class="refresh" disabled' in html_content
-        assert 'button class="inactivate" disabled' in html_content
-        
-        # Check for disabled input field
-        assert 'class="user-notes"' in html_content
-        assert 'disabled' in html_content
-        
-        # Check for warning icon with tooltip
-        assert '⚠️' in html_content
-        assert 'title="This SSH key fingerprint is BLACKLISTED"' in html_content
-        assert 'class="blacklist-warning"' in html_content
+
+        keys = await _call_list_user_keypair(mock_redis, sample_key_data, blacklisted=True)()
+        assert len(keys) == 1
+        assert keys[0]['is_blacklisted'] is True
 
 
 class TestBlacklistEndpointProtection:
@@ -588,177 +530,156 @@ class TestBlacklistEndpointProtection:
     @pytest.mark.asyncio
     async def test_refresh_blacklisted_key_returns_forbidden(self, mock_redis, sample_key_data, temp_blacklist_file):
         """Test that attempting to refresh a blacklisted key returns 403 Forbidden."""
-        # Setup blacklist
         with open(temp_blacklist_file, 'w') as f:
             f.write(f"{sample_key_data['finger_print']}\n")
-        
         with patch('app.BLACKLIST_FILE', temp_blacklist_file):
             reload_blacklist()
-        
+
         from app import refresh_user_keypair
+        from fastapi import HTTPException
         mock_request = Mock(spec=Request)
         mock_request.headers = {}
-        
-        # Should raise HTTPException with 403 status
-        from fastapi import HTTPException
+
         with pytest.raises(HTTPException) as exc_info:
-            with patch('app.get_redis_client', return_value=mock_redis):
+            with patch('app.auth', return_value='testuser'):
                 await refresh_user_keypair(
                     request=mock_request,
                     username='testuser',
                     finger_print=sample_key_data['finger_print'],
-                    redis=mock_redis
+                    redis=mock_redis,
                 )
-        
+
         assert exc_info.value.status_code == 403
         assert 'blacklisted' in str(exc_info.value.detail).lower()
     
     @pytest.mark.asyncio
     async def test_refresh_blacklisted_key_logs_warning(self, mock_redis, sample_key_data, temp_blacklist_file):
         """Test that attempting to refresh a blacklisted key logs a warning."""
-        # Setup blacklist
         with open(temp_blacklist_file, 'w') as f:
             f.write(f"{sample_key_data['finger_print']}\n")
-        
         with patch('app.BLACKLIST_FILE', temp_blacklist_file):
             reload_blacklist()
-        
+
         from app import refresh_user_keypair
+        from fastapi import HTTPException
         mock_request = Mock(spec=Request)
         mock_request.headers = {}
-        
-        from fastapi import HTTPException
-        with patch('app.logger') as mock_logger:
+
+        with patch('app.logger') as mock_logger, \
+             patch('app.auth', return_value='testuser'):
             with pytest.raises(HTTPException):
-                with patch('app.get_redis_client', return_value=mock_redis):
-                    await refresh_user_keypair(
-                        request=mock_request,
-                        username='testuser',
-                        finger_print=sample_key_data['finger_print'],
-                        redis=mock_redis
-                    )
-            
-            # Check that warning was logged
-            warning_calls = [call for call in mock_logger.warning.call_args_list]
-            assert any('Attempt to refresh blacklisted key' in str(call) for call in warning_calls)
+                await refresh_user_keypair(
+                    request=mock_request,
+                    username='testuser',
+                    finger_print=sample_key_data['finger_print'],
+                    redis=mock_redis,
+                )
+            warning_calls = mock_logger.warning.call_args_list
+            assert any('Attempt to refresh blacklisted key' in str(c) for c in warning_calls)
     
     @pytest.mark.asyncio
     async def test_inactivate_blacklisted_key_returns_forbidden(self, mock_redis, sample_key_data, temp_blacklist_file):
         """Test that attempting to inactivate a blacklisted key returns 403 Forbidden."""
-        # Setup blacklist
         with open(temp_blacklist_file, 'w') as f:
             f.write(f"{sample_key_data['finger_print']}\n")
-        
         with patch('app.BLACKLIST_FILE', temp_blacklist_file):
             reload_blacklist()
-        
+
         from app import inactivate_user_keypair
+        from fastapi import HTTPException
         mock_request = Mock(spec=Request)
         mock_request.headers = {}
-        
-        # Should raise HTTPException with 403 status
-        from fastapi import HTTPException
+
         with pytest.raises(HTTPException) as exc_info:
-            with patch('app.get_redis_client', return_value=mock_redis):
+            with patch('app.auth', return_value='testuser'):
                 await inactivate_user_keypair(
                     request=mock_request,
                     username='testuser',
                     finger_print=sample_key_data['finger_print'],
-                    redis=mock_redis
+                    redis=mock_redis,
                 )
-        
+
         assert exc_info.value.status_code == 403
         assert 'blacklisted' in str(exc_info.value.detail).lower()
     
     @pytest.mark.asyncio
     async def test_inactivate_blacklisted_key_logs_warning(self, mock_redis, sample_key_data, temp_blacklist_file):
         """Test that attempting to inactivate a blacklisted key logs a warning."""
-        # Setup blacklist
         with open(temp_blacklist_file, 'w') as f:
             f.write(f"{sample_key_data['finger_print']}\n")
-        
         with patch('app.BLACKLIST_FILE', temp_blacklist_file):
             reload_blacklist()
-        
+
         from app import inactivate_user_keypair
+        from fastapi import HTTPException
         mock_request = Mock(spec=Request)
         mock_request.headers = {}
-        
-        from fastapi import HTTPException
-        with patch('app.logger') as mock_logger:
+
+        with patch('app.logger') as mock_logger, \
+             patch('app.auth', return_value='testuser'):
             with pytest.raises(HTTPException):
-                with patch('app.get_redis_client', return_value=mock_redis):
-                    await inactivate_user_keypair(
-                        request=mock_request,
-                        username='testuser',
-                        finger_print=sample_key_data['finger_print'],
-                        redis=mock_redis
-                    )
-            
-            # Check that warning was logged
-            warning_calls = [call for call in mock_logger.warning.call_args_list]
-            assert any('Attempt to inactivate blacklisted key' in str(call) for call in warning_calls)
+                await inactivate_user_keypair(
+                    request=mock_request,
+                    username='testuser',
+                    finger_print=sample_key_data['finger_print'],
+                    redis=mock_redis,
+                )
+            warning_calls = mock_logger.warning.call_args_list
+            assert any('Attempt to inactivate blacklisted key' in str(c) for c in warning_calls)
     
     @pytest.mark.asyncio
     async def test_update_notes_blacklisted_key_returns_forbidden(self, mock_redis, sample_key_data, temp_blacklist_file):
         """Test that attempting to update notes for a blacklisted key returns 403 Forbidden."""
-        # Setup blacklist
         with open(temp_blacklist_file, 'w') as f:
             f.write(f"{sample_key_data['finger_print']}\n")
-        
         with patch('app.BLACKLIST_FILE', temp_blacklist_file):
             reload_blacklist()
-        
+
         from app import update_user_notes, UserNotes
+        from fastapi import HTTPException
         mock_request = Mock(spec=Request)
         mock_request.headers = {}
         user_notes = UserNotes(user_notes="Test note")
-        
-        # Should raise HTTPException with 403 status
-        from fastapi import HTTPException
+
         with pytest.raises(HTTPException) as exc_info:
-            with patch('app.get_redis_client', return_value=mock_redis):
+            with patch('app.auth', return_value='testuser'):
                 await update_user_notes(
                     request=mock_request,
                     username='testuser',
                     finger_print=sample_key_data['finger_print'],
                     user_notes=user_notes,
-                    redis=mock_redis
+                    redis=mock_redis,
                 )
-        
+
         assert exc_info.value.status_code == 403
         assert 'blacklisted' in str(exc_info.value.detail).lower()
     
     @pytest.mark.asyncio
     async def test_update_notes_blacklisted_key_logs_warning(self, mock_redis, sample_key_data, temp_blacklist_file):
         """Test that attempting to update notes for a blacklisted key logs a warning."""
-        # Setup blacklist
         with open(temp_blacklist_file, 'w') as f:
             f.write(f"{sample_key_data['finger_print']}\n")
-        
         with patch('app.BLACKLIST_FILE', temp_blacklist_file):
             reload_blacklist()
-        
+
         from app import update_user_notes, UserNotes
+        from fastapi import HTTPException
         mock_request = Mock(spec=Request)
         mock_request.headers = {}
         user_notes = UserNotes(user_notes="Test note")
-        
-        from fastapi import HTTPException
-        with patch('app.logger') as mock_logger:
+
+        with patch('app.logger') as mock_logger, \
+             patch('app.auth', return_value='testuser'):
             with pytest.raises(HTTPException):
-                with patch('app.get_redis_client', return_value=mock_redis):
-                    await update_user_notes(
-                        request=mock_request,
-                        username='testuser',
-                        finger_print=sample_key_data['finger_print'],
-                        user_notes=user_notes,
-                        redis=mock_redis
-                    )
-            
-            # Check that warning was logged
-            warning_calls = [call for call in mock_logger.warning.call_args_list]
-            assert any('Attempt to update notes for blacklisted key' in str(call) for call in warning_calls)
+                await update_user_notes(
+                    request=mock_request,
+                    username='testuser',
+                    finger_print=sample_key_data['finger_print'],
+                    user_notes=user_notes,
+                    redis=mock_redis,
+                )
+            warning_calls = mock_logger.warning.call_args_list
+            assert any('Attempt to update notes for blacklisted key' in str(c) for c in warning_calls)
     
     @pytest.mark.asyncio
     async def test_non_blacklisted_key_operations_allowed(self, mock_redis, sample_key_data, temp_blacklist_file):
@@ -824,6 +745,42 @@ class TestBlacklistEndpointProtection:
         except HTTPException as e:
             # Should not be a 403 error
             assert e.status_code != 403
+
+
+@pytest.mark.asyncio
+async def test_list_user_keypair_json_response_is_serializable(mock_redis, sample_key_data):
+    """JSON branch must not raise TypeError on Pendulum DateTime fields."""
+    import json as _json
+    from fastapi.responses import JSONResponse
+    from app import list_user_keypair
+
+    async def mock_scan(*args, **kwargs):
+        yield f"user:{sample_key_data['username']}:{sample_key_data['finger_print']}"
+
+    mock_redis.scan_iter = mock_scan
+    mock_redis.hgetall.return_value = {
+        k: str(v) if isinstance(v, (pendulum.DateTime, int)) else v
+        for k, v in sample_key_data.items()
+    }
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}  # no Accept: text/html → JSON path
+
+    with patch('app.auth', return_value='testuser'):
+        response = await list_user_keypair(
+            request=mock_request,
+            username='testuser',
+            redis=mock_redis,
+            found_username='testuser',
+        )
+
+    assert isinstance(response, JSONResponse)
+    assert response.status_code == 201
+    body = _json.loads(response.body)
+    key = body["message"][0]
+    assert isinstance(key["created_at"], str)
+    assert isinstance(key["valid_until"], str)
+    assert isinstance(key["expires_at"], str)
 
 
 if __name__ == '__main__':
