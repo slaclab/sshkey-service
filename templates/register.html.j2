@@ -16,48 +16,45 @@
     <h1>{{ username }}</h1>
     <p>{{ message }}</p>
 
-    <p>This page provides instructions for generating a new SSH key pair for use with S3DF. Specifically, we present shell commands that you should paste into your local (eg laptop) terminal that will create a SSH private and public key pair. You will then be able to utilize this key pair to SSH into S3DF without having to always enter a username, password and 2factor (duo).</p>
+    <h2>SSH Key Registration</h2>
 
-    <p>Our implementation also considers the use of time-limited SSH keys, so the generated key pair is only valid for use for a limited time period. {% if not no_expiry %}This is currently set to a maximum of 7 days, after which a new ssh keypair must be registered for use. For further security, {% else %} Therefore,{% endif %} you will also need to <a href="/list/{{ username }}">refresh</a> your keys at least once every {{ (validity_period / 3600) | int }} hours for the key pair to be valid and useable.</p>
+    <p>Our implementation also considers the use of time-limited SSH key periods, so a registered key is active for a limited time. {% if not no_expiry %}This is currently set to a maximum of 7 days, after which a new ssh keypair must be registered for use. For further security, {% else %} Therefore,{% endif %} you will also need to <a href="/list/{{ username }}">refresh</a> your keys at least once every {{ (validity_period / 3600) | int }} hours for the key pair to be active and valid. Active and inactive keys can be refreshed any number of times</p>
     <p>You may generate as may key pairs as you like and on as many computers as you like. However, you must register and refresh each public key with this service before you can use it to access S3DF.</p>
+    <p>If you are already familiar with managing SSH keys, feel free to register your own without using the below commands.</p>
 
-    <p>To create a new key pair, please enter the below commands on the computer terminal:</p>
+    <h2>Key Generation Commands</h2>
+    <p>The below commands will create a new SSH key pair for you and save it to a separate location and condfigure SSH to use that key for S3DF. The final output block will be the public key to be registered below.</p>
 
     <pre><code>
 
-# setup the local directories for the key pairs
 mkdir -p {{ prefix_path }} && chmod 700 {{ prefix_path }}
 
-# generate a new key pair
 ssh-keygen -t {{ key_type }} -f {{ prefix_path }}/temp-key -C "{{ username }}"
-# determine the SHA256 fingerprint and move the key to the correct location
+
 fingerprint=$(ssh-keygen -lf {{ prefix_path }}/temp-key | cut -f2 -d' ' | sed 's|[/+]|.|g')
+
 mv {{ prefix_path }}/temp-key {{ prefix_path }}/${fingerprint}
-# perhaps just delete this?
+
 mv {{ prefix_path }}/temp-key.pub {{ prefix_path }}/${fingerprint}.pub
 
-# configure your local ssh configuration to include the s3df config
 grep -q "Include {{ prefix_path }}/s3df.conf" ~/.ssh/config || echo -en "Include {{ prefix_path }}/s3df.conf\n\n$(< ~/.ssh/config)" > ~/.ssh/config
 
-# add s3df ssh dropin config to utilize the private key when ssh'ing into S3DF
 cat > {{ prefix_path }}/s3df.conf << EOF
 Host s3dflogin s3dflogin.slac.stanford.edu sdflogin001 sdflogin001.slac.stanford.edu sdflogin002 sdflogin002.slac.stanford.edu sdflogin003 sdflogin003.slac.stanford.edu
 $(find {{ prefix_path }} -type f -name 'SHA256:*' ! -name '*.pub' -print0 | xargs -0 -n1 echo '    IdentityFile ')
     IdentitiesOnly yes
 EOF
 
-echo
-echo
+echo -en "\n\nYOUR PUBLIC KEY:\n\n"
 
-# determine the public key for your newly minted key pair - this must be uploaded to our servers so that you can use this key pair to access S3DF
 ssh-keygen -e -f {{ prefix_path }}/${fingerprint}
-
 
     </code></pre>
 
-    <p>The output from the previous set of commands provides the ssh public key that we can use to identify you on our servers when you use the associated private key to ssh into our systems.</p>
+    <p>The output from the previous set of commands provides the SSH public key that we can use to identify you on our servers when you use the associated private key to SSH into our systems.</p>
     <p>Please enter this public key into the following form so that it may be registered.</p>
 
+    <h2>Key Registration</h2>
     <form id="uploadpublickey" action="javascript:void(0);">
         <textarea name="public_key" rows="6" cols=78" placeholder='---- BEGIN SSH2 PUBLIC KEY ----&#10;Comment: "256-bit ED25519, ...&#10;AAAABBBCCCDDDEEEFFFGGGHHH&#10;---- END SSH2 PUBLIC KEY ----'></textarea><br>
         <button class="submitbtn">Submit</button>
