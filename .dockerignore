@@ -13,3 +13,7 @@ pip-delete-this-directory.txt
 
 # penv
 slac-ssh-mfa/
+.venv/
+.pytest_cache/
+.claude/
+.DS_Store

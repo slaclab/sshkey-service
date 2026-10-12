@@ -49,7 +49,7 @@ All other endpoints are user-scoped (users can only access their own keys, admin
 
 basic data store at present. do not use the keys generated from this in anything put a development environment!
 
-create the venv using 
+install the dependencies (uses [uv](https://docs.astral.sh/uv/)) with
 
 ```
 make dev

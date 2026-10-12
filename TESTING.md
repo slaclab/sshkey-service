@@ -28,29 +28,29 @@ make test
 
 ```bash
 # Admin logic tests (SLACSSH_ADMINS parsing, auth_okay behaviour)
-./sshkey-service/bin/pytest tests/test_admin_logic.py -v
+uv run pytest tests/test_admin_logic.py -v
 
 # Blacklist tests
-./sshkey-service/bin/pytest tests/test_blacklist.py -v
+uv run pytest tests/test_blacklist.py -v
 ```
 
 ### Run Specific Test Classes
 
 ```bash
 # Admin parsing unit tests
-./sshkey-service/bin/pytest tests/test_admin_logic.py::TestParseAdmins -v
+uv run pytest tests/test_admin_logic.py::TestParseAdmins -v
 
 # Admin auth integration tests
-./sshkey-service/bin/pytest tests/test_admin_logic.py::TestAdminCheckInAuthOkay -v
+uv run pytest tests/test_admin_logic.py::TestAdminCheckInAuthOkay -v
 
 # Blacklist file loading tests
-./sshkey-service/bin/pytest tests/test_blacklist.py::TestBlacklistFileLoading -v
+uv run pytest tests/test_blacklist.py::TestBlacklistFileLoading -v
 
 # Blacklist authorized_keys integration tests
-./sshkey-service/bin/pytest tests/test_blacklist.py::TestBlacklistInAuthorizedKeys -v
+uv run pytest tests/test_blacklist.py::TestBlacklistInAuthorizedKeys -v
 
 # Blacklist thread safety tests
-./sshkey-service/bin/pytest tests/test_blacklist.py::TestBlacklistThreadSafety -v
+uv run pytest tests/test_blacklist.py::TestBlacklistThreadSafety -v
 ```
 
 ### Run with Coverage
@@ -71,7 +71,7 @@ make test-watch
 
 Note: You may need to install `pytest-watch` first:
 ```bash
-./sshkey-service/bin/pip install pytest-watch
+uv pip install pytest-watch
 ```
 
 ## Test Structure
@@ -233,7 +233,7 @@ with patch('app.BLACKLIST_FILE', temp_blacklist_file):
 ### Run with Debug Output
 
 ```bash
-./sshkey-service/bin/pytest tests/test_admin_logic.py -v -s
+uv run pytest tests/test_admin_logic.py -v -s
 ```
 
 The `-s` flag shows print statements and logging output.
@@ -241,13 +241,13 @@ The `-s` flag shows print statements and logging output.
 ### Run with PDB on Failure
 
 ```bash
-./sshkey-service/bin/pytest tests/test_admin_logic.py --pdb
+uv run pytest tests/test_admin_logic.py --pdb
 ```
 
 ### Run Only Failed Tests
 
 ```bash
-./sshkey-service/bin/pytest tests/ --lf
+uv run pytest tests/ --lf
 ```
 
 ## Coverage Goals
@@ -263,7 +263,7 @@ The `-s` flag shows print statements and logging output.
 Check current coverage:
 
 ```bash
-./sshkey-service/bin/pytest tests/test_admin_logic.py --cov=app --cov-report=term-missing
+uv run pytest tests/test_admin_logic.py --cov=app --cov-report=term-missing
 ```
 
 ## Resources
@@ -302,20 +302,20 @@ This runs all tests in `test_blacklist.py` with verbose output.
 
 ```bash
 # Run only file loading tests
-./sshkey-service/bin/pytest test_blacklist.py::TestBlacklistFileLoading -v
+uv run pytest test_blacklist.py::TestBlacklistFileLoading -v
 
 # Run only authorized_keys integration tests
-./sshkey-service/bin/pytest test_blacklist.py::TestBlacklistInAuthorizedKeys -v
+uv run pytest test_blacklist.py::TestBlacklistInAuthorizedKeys -v
 
 # Run only thread safety tests
-./sshkey-service/bin/pytest test_blacklist.py::TestBlacklistThreadSafety -v
+uv run pytest test_blacklist.py::TestBlacklistThreadSafety -v
 ```
 
 ### Run Specific Test Functions
 
 ```bash
 # Run a single test
-./sshkey-service/bin/pytest test_blacklist.py::TestBlacklistFileLoading::test_reload_blacklist_with_valid_file -v
+uv run pytest test_blacklist.py::TestBlacklistFileLoading::test_reload_blacklist_with_valid_file -v
 ```
 
 ### Run with Coverage
@@ -336,7 +336,7 @@ make test-watch
 
 Note: You may need to install `pytest-watch` first:
 ```bash
-./sshkey-service/bin/pip install pytest-watch
+uv pip install pytest-watch
 ```
 
 ## Test Structure
@@ -520,7 +520,7 @@ assert response.context['keys'][0]['is_blacklisted'] is True
 ### Run with Debug Output
 
 ```bash
-./sshkey-service/bin/pytest test_blacklist.py -v -s
+uv run pytest test_blacklist.py -v -s
 ```
 
 The `-s` flag shows print statements and logging output.
@@ -528,7 +528,7 @@ The `-s` flag shows print statements and logging output.
 ### Run with PDB on Failure
 
 ```bash
-./sshkey-service/bin/pytest test_blacklist.py --pdb
+uv run pytest test_blacklist.py --pdb
 ```
 
 This drops into the Python debugger when a test fails.
@@ -536,7 +536,7 @@ This drops into the Python debugger when a test fails.
 ### Run Only Failed Tests
 
 ```bash
-./sshkey-service/bin/pytest test_blacklist.py --lf
+uv run pytest test_blacklist.py --lf
 ```
 
 The `--lf` (last-failed) flag reruns only the tests that failed in the last run.
@@ -552,12 +552,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-python@v2
-        with:
-          python-version: '3.11'
-      - run: pip install -r requirements.txt
-      - run: pytest test_blacklist.py -v --cov=app
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked --dev
+      - run: uv run pytest tests/ -v
 ```
 
 ## Writing New Tests
@@ -606,7 +604,7 @@ While these tests focus on unit testing the blacklist functionality, for full in
 For performance testing of blacklist operations:
 
 ```bash
-./sshkey-service/bin/pytest test_blacklist.py -v --durations=10
+uv run pytest test_blacklist.py -v --durations=10
 ```
 
 This shows the 10 slowest tests.
@@ -631,10 +629,11 @@ open htmlcov/index.html  # On macOS
 
 ### Import Errors
 
-If you get import errors, ensure the virtual environment is activated:
+If you get import errors, make sure the environment is in sync and run through uv:
 
 ```bash
-source sshkey-service/bin/activate
+uv sync --dev
+uv run pytest tests/ -v
 ```
 
 ### Redis Connection Errors

@@ -1,0 +1,24 @@
+[project]
+name = "sshkey-service"
+version = "0.2.2"
+description = "SLAC SSH MFA public key registration service"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "fastapi[standard]",
+    "uvicorn",
+    "paramiko",
+    "loguru",
+    "jinja2",
+    "pendulum",
+    "redis",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "httpx",
+]
+
+[tool.uv]
+package = false
