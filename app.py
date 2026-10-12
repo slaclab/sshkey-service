@@ -13,6 +13,7 @@ import struct
 from loguru import logger
 
 from fastapi.responses import PlainTextResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.templating import Jinja2Templates
 
 from contextlib import asynccontextmanager
@@ -41,6 +42,9 @@ REDIS_PASSWORD = os.environ.get('SLACSSH_REDIS_PASSWORD', None)
 REDIS_DB = int(os.environ.get('SLACSSH_REDIS_DB', 0))
 
 USERNAME_HEADER_FIELD = os.environ.get('SLACSSH_USERNAME_HEADER_FIELD', 'REMOTE-USER')
+
+# browser origins (e.g. coact) allowed to call the api with the user's session cookie; unset disables cors
+CORS_ORIGINS = [o.strip() for o in os.environ.get('SLACSSH_CORS_ORIGINS', '').split(',') if o.strip()]
 
 # validity of key use
 VALIDITY_PERIOD = os.environ.get('SLACSSH_VALIDITY_PERIOD', 90000 )
@@ -228,6 +232,15 @@ def reload_blacklist(signum=None, frame=None):
 
 
 app = FastAPI(lifespan=lifespan)
+
+if CORS_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=CORS_ORIGINS,
+        allow_credentials=True,
+        allow_methods=['GET', 'POST', 'PATCH', 'DELETE'],
+        allow_headers=['Content-Type'],
+    )
 
 async def get_redis_client():
     return app.state.redis_client
