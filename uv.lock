@@ -1085,20 +1085,20 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "fastapi", extras = ["standard"] },
-    { name = "jinja2" },
-    { name = "loguru" },
-    { name = "paramiko" },
-    { name = "pendulum" },
-    { name = "redis" },
-    { name = "uvicorn" },
+    { name = "fastapi", extras = ["standard"], specifier = "==0.143.0" },
+    { name = "jinja2", specifier = "==3.1.6" },
+    { name = "loguru", specifier = "==0.7.3" },
+    { name = "paramiko", specifier = "==5.0.0" },
+    { name = "pendulum", specifier = "==3.2.0" },
+    { name = "redis", specifier = "==8.1.0" },
+    { name = "uvicorn", specifier = "==0.54.0" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "httpx" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "pytest", specifier = ">=9.1.1" },
+    { name = "pytest-asyncio", specifier = ">=1.4.0" },
 ]
 
 [[package]]
