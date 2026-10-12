@@ -1,4 +1,3 @@
-ENVIRONMENT := sshkey-service
 CONTAINER_NAME := slaclab/sshkey-service
 VERSION := 0.1.4
 TAG ?= $(VERSION)
@@ -7,16 +6,14 @@ DOCKERHUB_USERNAME := slaclab
 CONTAINER_PREFIX := docker.io
 
 dev:
-    #hmm... need libffi-dev
-	python3 -m venv $(ENVIRONMENT)
-	cd $(ENVIRONMENT) && ./bin/pip install  -r ../requirements.txt
+	uv sync --dev
 
 
 clean-dev:
-	rm -rf $(ENVIRONMENT) 
+	rm -rf .venv
 
 start-app:
-	$(ENVIRONMENT)/bin/python3 app.py 	
+	uv run python app.py
 
 dockerhub-login:
 	$(CONTAINER_RT) login --username $(DOCKERHUB_USERNAME) $(CONTAINER_PREFIX)/$(CONTAINER_NAME)
@@ -30,13 +27,13 @@ push:
 
 # Testing
 test:
-	$(ENVIRONMENT)/bin/pytest test_blacklist.py -v
+	uv run pytest tests/ -v
 
 test-coverage:
-	$(ENVIRONMENT)/bin/pytest test_blacklist.py -v --cov=app --cov-report=html --cov-report=term
+	uv run --with pytest-cov pytest tests/ -v --cov=app --cov-report=html --cov-report=term
 
 test-watch:
-	$(ENVIRONMENT)/bin/pytest-watch test_blacklist.py -v
+	uv run --with pytest-watch ptw tests/ -- -v
 
 # Blacklist management
 reload-blacklist:
