@@ -454,6 +454,43 @@ async def disable_key(redis: aioredis.Redis, key: str, item: dict, disabled_by: 
     return True
 
 
+async def fingerprint_records(redis: aioredis.Redis, finger_print: str) -> list:
+    """All key hashes holding this fingerprint, under any username (user:*:{fp})."""
+    # validated fingerprints are [A-Za-z0-9.:] only, so no glob metacharacters
+    return [k async for k in redis.scan_iter(f"user:*:{finger_print}")]
+
+
+async def is_revoked(redis: aioredis.Redis, item: dict, finger_print: str = None) -> bool:
+    """A key is revoked if its own record says so OR its fingerprint is in the global set.
+
+    The global set is authoritative: it also covers copies of the same key registered under
+    another username that were not (yet) marked individually.
+    """
+    if is_disabled(item):
+        return True
+    fp = finger_print or item.get('finger_print')
+    return bool(fp) and bool(await redis.sismember(DISABLED_FINGERPRINTS_SET, fp))
+
+
+async def revoke_fingerprint_everywhere(redis: aioredis.Redis, finger_print: str, disabled_by: str, origin_key: str = None) -> int:
+    """Revoke every other record of this fingerprint (same key registered under other usernames).
+
+    Revocation is about the key, not the account: if the private key is compromised it is
+    compromised for every account that trusts it. Returns how many extra records were revoked.
+    The originating user's free-text reason is not copied to other accounts.
+    """
+    n = 0
+    for k in await fingerprint_records(redis, finger_print):
+        if k == origin_key:
+            continue
+        item = await redis.hgetall(k)
+        if item and await disable_key(redis, k, item, disabled_by=disabled_by,
+                                      reason="same key was revoked on another account"):
+            logger.warning(f"Revoked {k}: same fingerprint revoked via {origin_key} by {disabled_by}")
+            n += 1
+    return n
+
+
 @app.get("/list/{username}")
 @auth_okay()
 async def list_user_keypair(
@@ -481,7 +518,7 @@ async def list_user_keypair(
         with blacklist_lock:
             item['is_blacklisted'] = item.get('finger_print') in blacklist_fingerprints
 
-        item['is_disabled'] = is_disabled(item)
+        item['is_disabled'] = await is_revoked(redis, item)
         if item['is_disabled'] and not include_disabled:
             continue
 
@@ -611,8 +648,20 @@ async def upload_user_public_key( request: Request, username: str, public_key: P
             detail="This SSH key has been revoked and cannot be registered again. Please generate a new keypair."
         )
 
+    # one key, one account: otherwise revoking it on one account would leave it live on another,
+    # and anyone could register someone else's (public) key and then revoke it to lock them out
+    this_key = f"user:{username}:{finger_print}"
+    others = [k for k in await fingerprint_records(redis, finger_print) if k != this_key]
+    if others:
+        source_ip = request.headers.get(source_ip_header_field, request.client.host)
+        logger.warning(f"Upload of key already registered to another account rejected: upload by {found_username} for user {username} from {source_ip}: {finger_print} (held by {others})")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This SSH key is already registered to another account. Each account needs its own keypair; please generate a new one."
+        )
+
     # check if the public key is already registered
-    existing_key = await redis.hgetall(f"user:{username}:{finger_print}")
+    existing_key = await redis.hgetall(this_key)
     logger.info(f"existing_key: {existing_key}")
     if existing_key:
         raise HTTPException(status_code=400, detail="Public key already registered for this fingerprint. Please upload a different public key or refresh the existing one.")
@@ -697,8 +746,9 @@ async def get_authorized_keys( request: Request, username: str, jinja_template: 
         # get item
         item = await redis.hgetall(k)
 
-        # permanently disabled keys are never served, not even commented out
-        if is_disabled(item):
+        # permanently disabled keys are never served, not even commented out; the global set
+        # is checked too, so a copy of a revoked key under this username is never served
+        if await is_revoked(redis, item, item.get('finger_print') or k.split(':', 2)[-1]):
             disabled += 1
             continue
 
@@ -756,7 +806,7 @@ async def destroy_user_keypair( request: Request, username: str, finger_print: s
     item = await redis.hgetall(f"user:{username}:{finger_print}")
     if not item:
         raise HTTPException(status_code=404, detail=f"No SSH public key found for {username} with fingerprint {finger_print}.")
-    if is_disabled(item):
+    if await is_revoked(redis, item, finger_print):
         # keep the audit record of disabled keys
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"SSH key {finger_print} has been revoked; its record is retained and cannot be destroyed.")
 
@@ -787,7 +837,7 @@ async def inactivate_user_keypair( request: Request, username: str, finger_print
     # TODO: probably better to have a field in the hash to indicate it's invalid/expired to prevent key reuse
     if not (item := await redis.hgetall(key)):
         raise HTTPException(status_code=404, detail=f"No SSH public key found for {username} with fingerprint {finger_print}.")
-    if is_disabled(item):
+    if await is_revoked(redis, item, finger_print):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"SSH key {finger_print} has been revoked and cannot be suspended.")
 
     # stupid dragonfly won't overwrite the hexpire. so lets delete the hash altogether and rewrite it
@@ -831,7 +881,7 @@ async def refresh_user_keypair( request: Request, username: str, finger_print: s
     item = await redis.hgetall(key)
     if not item:
         raise HTTPException(status_code=404, detail=f"No SSH public key found for {username} with fingerprint {finger_print}.")
-    if is_disabled(item):
+    if await is_revoked(redis, item, finger_print):
         logger.warning(f"Attempt to refresh disabled key by {found_username} for user {username}: {finger_print}")
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"SSH key {finger_print} has been revoked and cannot be refreshed. Please register a new key.")
     item = convert_key_bundle_to_pendulum(item)
@@ -905,7 +955,7 @@ async def update_user_notes( request: Request, username: str, finger_print: str,
     item = await redis.hgetall(key)
     if not item:
         raise HTTPException(status_code=404, detail=f"No SSH public key found for {username} with fingerprint {finger_print}.")
-    if is_disabled(item):
+    if await is_revoked(redis, item, finger_print):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"SSH key {finger_print} has been revoked; its notes cannot be changed.")
 
     # Update the user_notes field
@@ -937,9 +987,12 @@ async def disable_user_keypair( request: Request, username: str, finger_print: s
 
     reason = body.reason if body else ''
     newly = await disable_key(redis, key, item, disabled_by=found_username, reason=reason)
+    # always fan out (even if this record was already revoked) so copies registered elsewhere,
+    # e.g. before one-key-one-account was enforced, are revoked too
+    elsewhere = await revoke_fingerprint_everywhere(redis, finger_print, disabled_by=found_username, origin_key=key)
     if not newly:
-        return JSONResponse(content={'message': 'already disabled'}, status_code=status.HTTP_200_OK)
-    return JSONResponse(content={'message': True}, status_code=status.HTTP_202_ACCEPTED)
+        return JSONResponse(content={'message': 'already disabled', 'also_revoked': elsewhere}, status_code=status.HTTP_200_OK)
+    return JSONResponse(content={'message': True, 'also_revoked': elsewhere}, status_code=status.HTTP_202_ACCEPTED)
 
 
 @app.post("/admin/disable")
@@ -963,7 +1016,8 @@ async def admin_disable_keys( request: Request, body: AdminDisableRequest, redis
         raise HTTPException(status_code=400, detail="A reason is required.")
 
     logger.warning(f"Admin bulk disable by {found_username}: {'ALL KEYS' if body.all else body.usernames}; reason: {body.reason!r}")
-    disabled = already = 0
+    disabled = already = elsewhere = 0
+    touched = {}  # fingerprint -> originating key, for fanning out to other accounts
     for pattern in patterns:
         async for k in redis.scan_iter(pattern):
             item = await redis.hgetall(k)
@@ -973,9 +1027,14 @@ async def admin_disable_keys( request: Request, body: AdminDisableRequest, redis
                 disabled += 1
             else:
                 already += 1
+            if item.get('finger_print'):
+                touched.setdefault(item['finger_print'], k)
+    if not body.all:  # with all=true every record is already covered
+        for fp, origin in touched.items():
+            elsewhere += await revoke_fingerprint_everywhere(redis, fp, disabled_by=found_username, origin_key=origin)
 
-    logger.warning(f"Admin bulk disable by {found_username} finished: {disabled} disabled, {already} already disabled")
-    return JSONResponse(content={'disabled': disabled, 'already_disabled': already}, status_code=status.HTTP_200_OK)
+    logger.warning(f"Admin bulk disable by {found_username} finished: {disabled} disabled, {already} already disabled, {elsewhere} same-key copies on other accounts")
+    return JSONResponse(content={'disabled': disabled, 'already_disabled': already, 'also_revoked': elsewhere}, status_code=status.HTTP_200_OK)
 
 
 @app.get("/")

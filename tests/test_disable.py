@@ -7,6 +7,7 @@ Covers:
   - upload rejection of disabled fingerprints for any username
   - POST /admin/disable (by usernames / all + confirm)
 """
+import fnmatch
 import os
 import sys
 
@@ -83,9 +84,8 @@ class FakeRedis:
         return 1 if value in self.sets.get(name, set()) else 0
 
     async def scan_iter(self, pattern):
-        prefix = pattern.rstrip('*')
         for k in list(self.hashes):
-            if k.startswith(prefix):
+            if fnmatch.fnmatchcase(k, pattern):
                 yield k
 
 
@@ -272,19 +272,19 @@ class TestAdminDisable:
         resp = _call(fake, "POST", "/admin/disable", user=ADMIN,
                      json={"usernames": ["alice"], "reason": "admin rotation"})
         assert resp.status_code == 200
-        assert resp.json() == {'disabled': 1, 'already_disabled': 0}
+        assert resp.json() == {'disabled': 1, 'already_disabled': 0, 'also_revoked': 0}
         assert fake.hashes[f"user:alice:{FP}"][DISABLED_FIELD] == '1'
         assert DISABLED_FIELD not in fake.hashes[f"user:bob:{FP2}"]
 
     def test_all_with_confirm(self, fake, admins):
         resp = _call(fake, "POST", "/admin/disable", user=ADMIN,
                      json={"all": True, "reason": "incident", "confirm": "DISABLE ALL"})
-        assert resp.json() == {'disabled': 2, 'already_disabled': 0}
+        assert resp.json() == {'disabled': 2, 'already_disabled': 0, 'also_revoked': 0}
         assert fake.sets[DISABLED_FINGERPRINTS_SET] == {FP, FP2}
         # second run is a no-op
         resp = _call(fake, "POST", "/admin/disable", user=ADMIN,
                      json={"all": True, "reason": "incident", "confirm": "DISABLE ALL"})
-        assert resp.json() == {'disabled': 0, 'already_disabled': 2}
+        assert resp.json() == {'disabled': 0, 'already_disabled': 2, 'also_revoked': 0}
 
     def test_all_without_confirm_400(self, fake, admins):
         resp = _call(fake, "POST", "/admin/disable", user=ADMIN, json={"all": True, "reason": "incident"})
@@ -305,3 +305,80 @@ class TestAdminDisable:
         assert resp.status_code == 403
         assert fake.hset_calls == 0
 
+
+
+class TestSameKeyAcrossAccounts:
+    """One key registered under two usernames must not survive a revoke on either one."""
+
+    @staticmethod
+    def _key():
+        return TestUploadOfDisabledKey._key()
+
+    def test_second_account_cannot_register_same_key(self, caplog, admins):
+        # i. alice registers K;  ii. bob tries the same K -> rejected
+        block, fp = self._key()
+        fake = FakeRedis()
+        with patch.object(_app, 'EMAIL_ENABLED', False):
+            assert _call(fake, "POST", "/upload/alice", user="alice", json={"public_key": block}).status_code == 201
+            resp = _call(fake, "POST", "/upload/bob", user="bob", json={"public_key": block})
+        assert resp.status_code == 409
+        assert 'another account' in resp.json()['detail']
+        assert 'alice' not in resp.json()['detail']  # don't reveal who holds it
+        assert f"user:bob:{fp}" not in fake.hashes
+        assert 'already registered to another account' in caplog.text
+
+    def test_same_user_reupload_still_400(self, admins):
+        block, fp = self._key()
+        fake = FakeRedis()
+        with patch.object(_app, 'EMAIL_ENABLED', False):
+            _call(fake, "POST", "/upload/alice", user="alice", json={"public_key": block})
+            resp = _call(fake, "POST", "/upload/alice", user="alice", json={"public_key": block})
+        assert resp.status_code == 400
+
+    @pytest.fixture
+    def shared(self):
+        # legacy state: same fingerprint already registered under two accounts
+        return FakeRedis({
+            f"user:alice:{FP}": _stored("alice", FP),
+            f"user:bob:{FP}": _stored("bob", FP),
+            f"user:bob:{FP2}": _stored("bob", FP2),
+        })
+
+    def test_revoke_fans_out_to_other_accounts(self, shared, admins):
+        # iii. alice revokes K -> bob's copy is revoked too
+        resp = _call(shared, "POST", f"/disable/alice/{FP}", user="alice", json={"reason": "private note"})
+        assert resp.status_code == 202
+        assert resp.json()['also_revoked'] == 1
+        bob = shared.hashes[f"user:bob:{FP}"]
+        assert bob[DISABLED_FIELD] == '1' and IS_ACTIVE_FIELD not in bob
+        assert bob['disabled_by'] == 'alice'
+        assert 'private note' not in bob['disabled_reason']  # alice's reason stays on alice's record
+        assert DISABLED_FIELD not in shared.hashes[f"user:bob:{FP2}"]  # bob's other key untouched
+
+    def test_authorized_keys_other_account_omits_revoked(self, shared, admins):
+        # iv. /authorized_keys/bob must not serve K
+        _call(shared, "POST", f"/disable/alice/{FP}", user="alice")
+        body = _call(shared, "GET", "/authorized_keys/bob").text
+        assert shared.hashes[f"user:bob:{FP2}"]['public_key'] in body  # sanity: bob's other key served
+        assert body.count('ssh-ed25519') == 1
+
+    def test_global_set_alone_blocks_unmarked_copy(self, shared, admins):
+        # even if a copy was never marked individually, the global set wins
+        shared.sets[DISABLED_FINGERPRINTS_SET].add(FP)
+        assert _call(shared, "GET", "/authorized_keys/bob").text.count('ssh-ed25519') == 1
+        assert _call(shared, "PATCH", f"/refresh/bob/{FP}", user="bob").status_code == 403
+        listed = {k['finger_print']: k['is_disabled'] for k in _call(shared, "GET", "/list/bob", user="bob").json()['message']}
+        assert listed == {FP: True, FP2: False}
+
+    def test_rerevoke_cleans_up_legacy_copy(self, shared, admins):
+        # alice's record revoked before fan-out existed; revoking again reaches bob's copy
+        shared.hashes[f"user:alice:{FP}"].update({DISABLED_FIELD: '1'})
+        resp = _call(shared, "POST", f"/disable/alice/{FP}", user="alice")
+        assert resp.status_code == 200 and resp.json()['also_revoked'] == 1
+        assert shared.hashes[f"user:bob:{FP}"][DISABLED_FIELD] == '1'
+
+    def test_admin_by_username_fans_out(self, shared, admins):
+        resp = _call(shared, "POST", "/admin/disable", user=ADMIN, json={"usernames": ["alice"], "reason": "rotation"})
+        assert resp.json() == {'disabled': 1, 'already_disabled': 0, 'also_revoked': 1}
+        assert shared.hashes[f"user:bob:{FP}"][DISABLED_FIELD] == '1'
+        assert DISABLED_FIELD not in shared.hashes[f"user:bob:{FP2}"]

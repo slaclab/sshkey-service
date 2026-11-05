@@ -35,6 +35,7 @@ def mock_redis():
     """Mock Redis client for testing."""
     redis_mock = AsyncMock()
     redis_mock.hgetall = AsyncMock()
+    redis_mock.sismember = AsyncMock(return_value=0)  # fingerprint not revoked
     redis_mock.scan_iter = AsyncMock()
     return redis_mock
 
