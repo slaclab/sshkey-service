@@ -224,7 +224,6 @@ class TestEnforcementOnDisabledKey:
         assert 'class="disabled-key"' in resp.text
         assert 'Show disabled keys (1)' in resp.text
         assert 'Permanently disabled' in resp.text
-        assert 'is permanent and cannot be undone' in resp.text
 
 
 class TestUploadOfDisabledKey:

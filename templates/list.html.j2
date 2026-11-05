@@ -36,13 +36,6 @@
         #mykeys.show-disabled tr.disabled-key {
             display: table-row;
         }
-        .disable-warning {
-            border: 2px solid #b00020;
-            background-color: #fdecea;
-            color: #5f0010;
-            padding: 0.5em 0.75em;
-            max-width: 60em;
-        }
         .key-legend {
             font-size: 0.9em;
             color: #444;
@@ -62,12 +55,6 @@
         ✅ <b>Active</b>: the key can be used to log in.
         ❌ <b>Inactive</b>: temporarily paused; click <b>Refresh</b> to use it again.
         🚫 <b>Disabled</b>: permanently turned off. It can never be used or registered again.
-    </p>
-
-    <p class="disable-warning">
-        <b>⚠️ Warning: "Disable permanently" is permanent and cannot be undone.</b>
-        A disabled key stops working immediately and can never be refreshed, re-enabled or registered again; you will need to generate a new keypair.
-        If you only want to stop a key for now, use <b>Inactivate</b> instead and turn it back on later with <b>Refresh</b>.
     </p>
 
     {% if disabled_count %}
