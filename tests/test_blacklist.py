@@ -785,3 +785,60 @@ async def test_list_user_keypair_json_response_is_serializable(mock_redis, sampl
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+class TestBlacklistOnUpload:
+    """Upload must reject blacklisted (revoked) fingerprints, for any username."""
+
+    @staticmethod
+    def _key_and_fp():
+        from test_key_parsing import _make_ed25519_key, _wrap_rfc4716
+        key = _make_ed25519_key()
+        fp = key.fingerprint.rstrip('=').replace('/', '.').replace('+', '.')
+        return _wrap_rfc4716(key), fp
+
+    @staticmethod
+    def _post(block, blacklist, username='testuser'):
+        from unittest.mock import MagicMock
+        from test_key_parsing import _make_upload_client
+        client, mock_redis = _make_upload_client()
+        with patch('app.app.state', MagicMock(redis_client=mock_redis)), \
+             patch.object(_app, 'blacklist_fingerprints', blacklist):
+            resp = client.post(
+                f'/upload/{username}',
+                json={'public_key': block},
+                headers={'REMOTE-USER': username},
+            )
+        return resp, mock_redis
+
+    def test_blacklisted_key_upload_rejected(self):
+        block, fp = self._key_and_fp()
+        resp, mock_redis = self._post(block, {fp})
+        assert resp.status_code == 403
+        assert 'revoked' in resp.json()['detail']
+        mock_redis.hset.assert_not_called()
+        mock_redis.hexpire.assert_not_called()
+
+    def test_blacklisted_key_rejected_for_different_user(self):
+        """Blacklist is global: a revoked key cannot be re-registered under another account."""
+        block, fp = self._key_and_fp()
+        resp, mock_redis = self._post(block, {fp}, username='otheruser')
+        assert resp.status_code == 403
+        mock_redis.hset.assert_not_called()
+
+    def test_blacklisted_upload_checked_before_existing_lookup(self):
+        """Reject before touching redis at all (no existing-key lookup needed)."""
+        block, fp = self._key_and_fp()
+        resp, mock_redis = self._post(block, {fp})
+        assert resp.status_code == 403
+        mock_redis.hgetall.assert_not_called()
+
+    def test_blacklisted_upload_logs_warning(self, caplog):
+        block, fp = self._key_and_fp()
+        self._post(block, {fp})
+        assert 'Attempt to upload blacklisted key' in caplog.text
+
+    def test_non_blacklisted_key_upload_allowed(self):
+        block, fp = self._key_and_fp()
+        resp, mock_redis = self._post(block, {'SHA256:' + 'B' * 43})
+        assert resp.status_code == 201
+        mock_redis.hset.assert_called_once()

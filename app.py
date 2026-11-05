@@ -519,6 +519,18 @@ async def upload_user_public_key( request: Request, username: str, public_key: P
 
     finger_print, pkey = determine_public_key(public_key)
 
+    # reject revoked keys before anything else; the blacklist is global, so this also stops
+    # a revoked key being registered under a different username or after an admin /destroy
+    with blacklist_lock:
+        is_blacklisted = finger_print in blacklist_fingerprints
+    if is_blacklisted:
+        source_ip = request.headers.get(source_ip_header_field, request.client.host)
+        logger.warning(f"Attempt to upload blacklisted key for user {username} from {source_ip}: {finger_print}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This SSH key has been revoked and cannot be registered. Please generate a new keypair."
+        )
+
     # check if the public key is already registered
     existing_key = await redis.hgetall(f"user:{username}:{finger_print}")
     logger.info(f"existing_key: {existing_key}")
