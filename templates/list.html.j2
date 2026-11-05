@@ -20,6 +20,33 @@
         .blacklist-warning:hover {
             filter: brightness(1.2);
         }
+        .disable {
+            color: #fff;
+            background-color: #b00020;
+            border: 1px solid #b00020;
+        }
+        .disabled-status {
+            cursor: help;
+        }
+        /* permanently disabled keys are hidden unless "show disabled keys" is ticked */
+        #mykeys tr.disabled-key {
+            display: none;
+            color: #888;
+        }
+        #mykeys.show-disabled tr.disabled-key {
+            display: table-row;
+        }
+        .disable-warning {
+            border: 2px solid #b00020;
+            background-color: #fdecea;
+            color: #5f0010;
+            padding: 0.5em 0.75em;
+            max-width: 60em;
+        }
+        .key-legend {
+            font-size: 0.9em;
+            color: #444;
+        }
     </style>
 </head>
 <body>
@@ -29,6 +56,22 @@
 
     {% if no_expiry %}
     <p>SSH key expiry disabled</p>
+    {% endif %}
+
+    <p class="key-legend">
+        ✅ <b>Active</b>: the key can be used to log in.
+        ❌ <b>Inactive</b>: temporarily paused; click <b>Refresh</b> to use it again.
+        🚫 <b>Disabled</b>: permanently turned off. It can never be used or registered again.
+    </p>
+
+    <p class="disable-warning">
+        <b>⚠️ Warning: "Disable permanently" is permanent and cannot be undone.</b>
+        A disabled key stops working immediately and can never be refreshed, re-enabled or registered again; you will need to generate a new keypair.
+        If you only want to stop a key for now, use <b>Inactivate</b> instead and turn it back on later with <b>Refresh</b>.
+    </p>
+
+    {% if disabled_count %}
+    <p><label><input type="checkbox" id="show-disabled"> Show disabled keys ({{ disabled_count }})</label></p>
     {% endif %}
 
     <table id="mykeys">
@@ -45,13 +88,14 @@
         <th>action</th>
     </tr>
 {% for key in keys %}
-    <tr data-fingerprint="{{ key['finger_print'] }}">
+    {% set locked = key.get('is_blacklisted') or key.get('is_disabled') %}
+    <tr data-fingerprint="{{ key['finger_print'] }}"{% if key.get('is_disabled') %} class="disabled-key"{% endif %}>
 
     <td>
 {{ key['finger_print'] }}
     </td>
     <td>
-{% if key.get('is_blacklisted') %}<span class="blacklist-warning" title="This SSH key fingerprint is BLACKLISTED">⚠️</span>{% elif key['is_active'] == "1" %}✅{% else %}❌{% endif %}
+{% if key.get('is_disabled') %}<span class="disabled-status" title="Permanently disabled {{ key.get('disabled_at', '') }} by {{ key.get('disabled_by', '') }}{% if key.get('disabled_reason') %}: {{ key['disabled_reason'] }}{% endif %}">🚫</span>{% elif key.get('is_blacklisted') %}<span class="blacklist-warning" title="This SSH key fingerprint is BLACKLISTED">⚠️</span>{% elif key.get('is_active') == "1" %}✅{% else %}❌{% endif %}
     </td>
     <td class="datetime" data-utc="{{ key['created_at'] }}">
 {{ key['created_at'] }}
@@ -68,11 +112,16 @@
     </td>
 {% endif %}
     <td>
-    <input type="text" class="user-notes" value="{{ key.get('user_notes', '') }}" placeholder="Add notes..." style="width: 200px;" data-original-value="{{ key.get('user_notes', '') }}"{% if key.get('is_blacklisted') %} disabled{% endif %}>
+    <input type="text" class="user-notes" value="{{ key.get('user_notes', '') }}" placeholder="Add notes..." style="width: 200px;" data-original-value="{{ key.get('user_notes', '') }}"{% if locked %} disabled{% endif %}>
     </td>
     <td>
-    <button class="refresh"{% if key.get('is_blacklisted') %} disabled{% endif %}>Refresh</button>
-    <button class="inactivate"{% if key.get('is_blacklisted') %} disabled{% endif %}>Inactivate</button>
+    {% if key.get('is_disabled') %}
+    <span title="Permanently disabled keys cannot be refreshed or changed">Permanently disabled</span>
+    {% else %}
+    <button class="refresh"{% if locked %} disabled{% endif %} title="Make this key active again for another {{ (validity_period / 3600) | int }} hours.">Refresh</button>
+    <button class="inactivate"{% if locked %} disabled{% endif %} title="Temporarily pause this key. You can undo this at any time with Refresh.">Inactivate (undo with Refresh)</button>
+    <button class="disable"{% if locked %} disabled{% endif %} title="Use this if the key may be compromised or the device holding it is lost. This CANNOT be undone; you will need to generate and register a new key.">Disable permanently</button>
+    {% endif %}
     </td>
 
 
@@ -85,13 +134,20 @@
 <script type="text/javascript">
     const username = "{{ username }}";
 
-    const fpoperation = function(url, method) {
-        fetch(url, { "method": method })
-        .then(response => {
+    const fpoperation = function(url, method, body) {
+        const opts = { "method": method };
+        if (body !== undefined) {
+            opts.headers = { "Content-Type": "application/json" };
+            opts.body = JSON.stringify(body);
+        }
+        fetch(url, opts)
+        .then(async response => {
             if (response.ok) {
               return response.text();
             } else {
-              throw new Error(`Server error: ${response.status}`);
+              let detail = `Server error: ${response.status}`;
+              try { detail = (await response.json()).detail || detail; } catch (e) {}
+              throw new Error(detail);
             }
         })
         .then(data => {
@@ -99,7 +155,7 @@
             window.location.reload();
         })
         .catch(error => {
-            alert('Fetch error:', error);
+            alert(error.message);
         })
     }
 
@@ -113,6 +169,27 @@
         const fingerprint = ev.currentTarget.closest("tr").getAttribute("data-fingerprint");
         fpoperation(`../inactivate/${username}/${fingerprint}`, "DELETE");
     }))
+    document.querySelectorAll(".disable").forEach((el) => el.addEventListener("click", (ev) => {
+        if (ev.currentTarget.disabled) return;
+        const fingerprint = ev.currentTarget.closest("tr").getAttribute("data-fingerprint");
+        if (!confirm(`WARNING: disabling is PERMANENT.\n\nPermanently disable key ${fingerprint}?\n\nThis CANNOT be undone. The key will stop working immediately and can never be registered again. You will need to generate a new keypair.\n\n(If you only want to pause it, use Inactivate instead.)`)) return;
+        const reason = prompt("Optional: why are you disabling this key? (e.g. lost laptop, possibly compromised)", "");
+        if (reason === null) return;
+        fpoperation(`../disable/${username}/${fingerprint}`, "POST", { reason: reason });
+    }))
+
+    // show/hide permanently disabled keys; remember the choice per browser
+    const showDisabled = document.getElementById("show-disabled");
+    if (showDisabled) {
+        const table = document.getElementById("mykeys");
+        const apply = () => table.classList.toggle("show-disabled", showDisabled.checked);
+        try { showDisabled.checked = localStorage.getItem("sshkey-show-disabled") === "1"; } catch (e) {}
+        apply();
+        showDisabled.addEventListener("change", () => {
+            apply();
+            try { localStorage.setItem("sshkey-show-disabled", showDisabled.checked ? "1" : "0"); } catch (e) {}
+        });
+    }
 
     // Function to save user notes
     const saveUserNotes = (input) => {

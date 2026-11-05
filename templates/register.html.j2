@@ -70,7 +70,7 @@ ssh-keygen -e -f {{ prefix_path }}/${fingerprint}
 
     const errmsg = (msg) => {
         const vmsg = document.querySelector("#uploadpublickey p.errmsg");
-        vmsg.innerHTML = msg;
+        vmsg.textContent = (msg && msg.message) ? msg.message : msg;
         vmsg.classList.remove("d-none");
     }
 
@@ -79,7 +79,8 @@ ssh-keygen -e -f {{ prefix_path }}/${fingerprint}
             if(!resp.ok) {
                 console.log("Call to ", serverURL, " failed");
                 let respdata = await resp.text();
-                return Promise.reject(new Error(resp.statusText + " --> " + respdata));
+                try { respdata = JSON.parse(respdata).detail || respdata; } catch (e) {}
+                return Promise.reject(new Error(respdata));
             }
         return resp.json();
     }
