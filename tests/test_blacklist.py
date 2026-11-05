@@ -35,6 +35,7 @@ def mock_redis():
     """Mock Redis client for testing."""
     redis_mock = AsyncMock()
     redis_mock.hgetall = AsyncMock()
+    redis_mock.sismember = AsyncMock(return_value=0)  # fingerprint not revoked
     redis_mock.scan_iter = AsyncMock()
     return redis_mock
 
@@ -301,15 +302,11 @@ class TestBlacklistInAuthorizedKeys:
                 yield k
         
         def mock_hgetall_side_effect(key):
-            if 'blacklisted_key' in key:
-                return AsyncMock(return_value={
-                    k: str(v) if isinstance(v, (pendulum.DateTime, int)) else v 
-                    for k, v in key1.items()
-                })()
-            return AsyncMock(return_value={
-                k: str(v) if isinstance(v, (pendulum.DateTime, int)) else v 
-                for k, v in key2.items()
-            })()
+            src = key1 if 'blacklisted_key' in key else key2
+            return {
+                k: str(v) if isinstance(v, (pendulum.DateTime, int)) else v
+                for k, v in src.items()
+            }
         
         mock_redis.scan_iter = mock_scan
         mock_redis.hgetall.side_effect = mock_hgetall_side_effect

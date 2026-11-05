@@ -36,6 +36,7 @@ VALID_FP2 = "SHA256:" + "B" * 43
 def mock_redis():
     redis_mock = AsyncMock()
     redis_mock.hgetall = AsyncMock()
+    redis_mock.sismember = AsyncMock(return_value=0)  # fingerprint not revoked
     redis_mock.scan_iter = AsyncMock()
     return redis_mock
 

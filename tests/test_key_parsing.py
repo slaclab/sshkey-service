@@ -213,6 +213,7 @@ def _make_upload_client():
     mock_redis.hgetall = AsyncMock(return_value={})
     mock_redis.hset = AsyncMock(return_value=True)
     mock_redis.hexpire = AsyncMock(return_value=True)
+    mock_redis.sismember = AsyncMock(return_value=0)  # fingerprint not disabled
 
     async def empty_scan(*args, **kwargs):
         return

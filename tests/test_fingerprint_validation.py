@@ -49,6 +49,7 @@ def _real_fingerprint() -> str:
 def _make_mock_redis():
     """Return a mock Redis client suitable for endpoint integration tests."""
     mock_redis = AsyncMock()
+    mock_redis.sismember = AsyncMock(return_value=0)  # fingerprint not revoked
     mock_redis.hgetall = AsyncMock(return_value={
         'username': 'testuser',
         'finger_print': _real_fingerprint(),
