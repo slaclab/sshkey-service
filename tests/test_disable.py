@@ -222,8 +222,8 @@ class TestEnforcementOnDisabledKey:
             resp = client.get("/list/testuser", headers={"REMOTE-USER": "testuser", "accept": "text/html"})
         assert resp.status_code == 200
         assert 'class="disabled-key"' in resp.text
-        assert 'Show disabled keys (1)' in resp.text
-        assert 'Permanently disabled' in resp.text
+        assert 'Show revoked keys (1)' in resp.text
+        assert '>Revoked</span>' in resp.text
 
 
 class TestUploadOfDisabledKey:
@@ -239,7 +239,7 @@ class TestUploadOfDisabledKey:
         fake = FakeRedis(disabled={fp})
         resp = _call(fake, "POST", "/upload/testuser", json={"public_key": block})
         assert resp.status_code == 403
-        assert 'permanently disabled' in resp.json()['detail']
+        assert 'revoked' in resp.json()['detail']
         assert fake.hset_calls == 0
         assert 'Reuse of disabled key' in caplog.text
 

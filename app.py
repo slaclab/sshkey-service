@@ -608,7 +608,7 @@ async def upload_user_public_key( request: Request, username: str, public_key: P
         logger.warning(f"Reuse of disabled key rejected: upload by {found_username} for user {username} from {source_ip}: {finger_print}")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="This SSH key was permanently disabled and cannot be registered again. Please generate a new keypair."
+            detail="This SSH key has been revoked and cannot be registered again. Please generate a new keypair."
         )
 
     # check if the public key is already registered
@@ -758,7 +758,7 @@ async def destroy_user_keypair( request: Request, username: str, finger_print: s
         raise HTTPException(status_code=404, detail=f"No SSH public key found for {username} with fingerprint {finger_print}.")
     if is_disabled(item):
         # keep the audit record of disabled keys
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"SSH key {finger_print} is permanently disabled; its record is retained and cannot be destroyed.")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"SSH key {finger_print} has been revoked; its record is retained and cannot be destroyed.")
 
     return await redis.delete(f"user:{username}:{finger_print}")
 
@@ -788,7 +788,7 @@ async def inactivate_user_keypair( request: Request, username: str, finger_print
     if not (item := await redis.hgetall(key)):
         raise HTTPException(status_code=404, detail=f"No SSH public key found for {username} with fingerprint {finger_print}.")
     if is_disabled(item):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"SSH key {finger_print} is permanently disabled.")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"SSH key {finger_print} has been revoked and cannot be suspended.")
 
     # stupid dragonfly won't overwrite the hexpire. so lets delete the hash altogether and rewrite it
     await redis.delete(key)
@@ -833,7 +833,7 @@ async def refresh_user_keypair( request: Request, username: str, finger_print: s
         raise HTTPException(status_code=404, detail=f"No SSH public key found for {username} with fingerprint {finger_print}.")
     if is_disabled(item):
         logger.warning(f"Attempt to refresh disabled key by {found_username} for user {username}: {finger_print}")
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"SSH key {finger_print} is permanently disabled and cannot be refreshed. Please register a new key.")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"SSH key {finger_print} has been revoked and cannot be refreshed. Please register a new key.")
     item = convert_key_bundle_to_pendulum(item)
 
     # do not extend past expire time
@@ -906,7 +906,7 @@ async def update_user_notes( request: Request, username: str, finger_print: str,
     if not item:
         raise HTTPException(status_code=404, detail=f"No SSH public key found for {username} with fingerprint {finger_print}.")
     if is_disabled(item):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"SSH key {finger_print} is permanently disabled; its notes cannot be changed.")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"SSH key {finger_print} has been revoked; its notes cannot be changed.")
 
     # Update the user_notes field
     await redis.hset(key, 'user_notes', user_notes.user_notes)

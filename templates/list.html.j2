@@ -28,7 +28,7 @@
         .disabled-status {
             cursor: help;
         }
-        /* permanently disabled keys are hidden unless "show disabled keys" is ticked */
+        /* revoked (permanently disabled) keys are hidden unless "show revoked keys" is ticked */
         #mykeys tr.disabled-key {
             display: none;
             color: #888;
@@ -53,12 +53,12 @@
 
     <p class="key-legend">
         ✅ <b>Active</b>: the key can be used to log in.
-        ❌ <b>Inactive</b>: temporarily paused; click <b>Refresh</b> to use it again.
-        🚫 <b>Disabled</b>: permanently turned off. It can never be used or registered again.
+        ❌ <b>Inactive</b>: suspended or expired; click <b>Refresh</b> to use it again.
+        🚫 <b>Revoked</b>: permanently turned off. It can never be used or registered again.
     </p>
 
     {% if disabled_count %}
-    <p><label><input type="checkbox" id="show-disabled"> Show disabled keys ({{ disabled_count }})</label></p>
+    <p><label><input type="checkbox" id="show-disabled"> Show revoked keys ({{ disabled_count }})</label></p>
     {% endif %}
 
     <table id="mykeys">
@@ -82,7 +82,7 @@
 {{ key['finger_print'] }}
     </td>
     <td>
-{% if key.get('is_disabled') %}<span class="disabled-status" title="Permanently disabled {{ key.get('disabled_at', '') }} by {{ key.get('disabled_by', '') }}{% if key.get('disabled_reason') %}: {{ key['disabled_reason'] }}{% endif %}">🚫</span>{% elif key.get('is_blacklisted') %}<span class="blacklist-warning" title="This SSH key fingerprint is BLACKLISTED">⚠️</span>{% elif key.get('is_active') == "1" %}✅{% else %}❌{% endif %}
+{% if key.get('is_disabled') %}<span class="disabled-status" title="Revoked {{ key.get('disabled_at', '') }} by {{ key.get('disabled_by', '') }}{% if key.get('disabled_reason') %}: {{ key['disabled_reason'] }}{% endif %}">🚫</span>{% elif key.get('is_blacklisted') %}<span class="blacklist-warning" title="This SSH key fingerprint is BLACKLISTED">⚠️</span>{% elif key.get('is_active') == "1" %}✅{% else %}❌{% endif %}
     </td>
     <td class="datetime" data-utc="{{ key['created_at'] }}">
 {{ key['created_at'] }}
@@ -103,11 +103,11 @@
     </td>
     <td>
     {% if key.get('is_disabled') %}
-    <span title="Permanently disabled keys cannot be refreshed or changed">Permanently disabled</span>
+    <span title="Revoked keys cannot be refreshed or changed">Revoked</span>
     {% else %}
     <button class="refresh"{% if locked %} disabled{% endif %} title="Make this key active again for another {{ (validity_period / 3600) | int }} hours.">Refresh</button>
-    <button class="inactivate"{% if locked %} disabled{% endif %} title="Temporarily pause this key. You can undo this at any time with Refresh.">Inactivate (undo with Refresh)</button>
-    <button class="disable"{% if locked %} disabled{% endif %} title="Use this if the key may be compromised or the device holding it is lost. This CANNOT be undone; you will need to generate and register a new key.">Disable permanently</button>
+    <button class="inactivate"{% if locked %} disabled{% endif %} title="Temporarily stop this key. Click Refresh to resume it.">Suspend</button>
+    <button class="disable"{% if locked %} disabled{% endif %} title="Permanently turn off this key, e.g. if it may be compromised or the device holding it is lost. This CANNOT be undone; you will need to generate and register a new key.">Revoke</button>
     {% endif %}
     </td>
 
@@ -159,8 +159,8 @@
     document.querySelectorAll(".disable").forEach((el) => el.addEventListener("click", (ev) => {
         if (ev.currentTarget.disabled) return;
         const fingerprint = ev.currentTarget.closest("tr").getAttribute("data-fingerprint");
-        if (!confirm(`WARNING: disabling is PERMANENT.\n\nPermanently disable key ${fingerprint}?\n\nThis CANNOT be undone. The key will stop working immediately and can never be registered again. You will need to generate a new keypair.\n\n(If you only want to pause it, use Inactivate instead.)`)) return;
-        const reason = prompt("Optional: why are you disabling this key? (e.g. lost laptop, possibly compromised)", "");
+        if (!confirm(`WARNING: revoking is PERMANENT.\n\nRevoke key ${fingerprint}?\n\nThis CANNOT be undone. The key will stop working immediately and can never be registered again. You will need to generate a new keypair.\n\n(If you only want to stop it for now, use Suspend instead.)`)) return;
+        const reason = prompt("Optional: why are you revoking this key? (e.g. lost laptop, possibly compromised)", "");
         if (reason === null) return;
         fpoperation(`../disable/${username}/${fingerprint}`, "POST", { reason: reason });
     }))
